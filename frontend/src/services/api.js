@@ -1,16 +1,4 @@
-const API_BASE_URL = (() => {
-  const configured = import.meta.env.VITE_API_BASE_URL?.trim();
-
-  if (configured) {
-    return configured.replace(/\/+$/, "");
-  }
-
-  const protocol = window.location.protocol;
-  const hostname = window.location.hostname;
-
-  return `${protocol}//${hostname}:5000/api`;
-})();
-
+const API_BASE_URL = "http://161.35.213.198:5000/api";
 const API_ORIGIN = API_BASE_URL.replace(/\/api$/, "");
 /* ================= IMAGE RESOLVER ================= */
 export function resolveApiUrl(path) {
