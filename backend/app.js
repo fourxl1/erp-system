@@ -49,7 +49,15 @@ app.use(
 ========================= */
 app.use(
   helmet({
-    crossOriginResourcePolicy: false
+    crossOriginResourcePolicy: false,
+    crossOriginOpenerPolicy: false,
+    originAgentCluster: false,
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "upgrade-insecure-requests": null
+      }
+    }
   })
 );
 app.disable("x-powered-by");
