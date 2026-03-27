@@ -1,12 +1,14 @@
-const API_BASE_URL = "http://161.35.213.198:5000/api";
-const API_ORIGIN = "http://161.35.213.198:5000";
+const API_BASE_URL = "/api";
+const API_ORIGIN = "";
 
 export function resolveApiUrl(path) {
   if (!path) return "";
 
   if (/^https?:\/\//i.test(path)) return path;
 
-  return `${API_ORIGIN}${path.startsWith("/") ? path : `/${path}`}`;
+  return API_ORIGIN
+    ? `${API_ORIGIN}${path.startsWith("/") ? path : `/${path}`}`
+    : (path.startsWith("/") ? path : `/${path}`);
 }
 
 function getToken() {
