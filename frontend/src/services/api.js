@@ -1,17 +1,14 @@
 const API_BASE_URL = "http://161.35.213.198:5000/api";
-const API_ORIGIN = API_BASE_URL.replace(/\/api$/, "");
-/* ================= IMAGE RESOLVER ================= */
+const API_ORIGIN = "http://161.35.213.198:5000";
+
 export function resolveApiUrl(path) {
   if (!path) return "";
 
-  // If already full URL
   if (/^https?:\/\//i.test(path)) return path;
 
-  // Attach backend origin
   return `${API_ORIGIN}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-/* ================= CORE ================= */
 function getToken() {
   return localStorage.getItem("token");
 }
@@ -24,11 +21,13 @@ function clearSession() {
 
 function buildQuery(params = {}) {
   const search = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== "") {
-      search.set(k, v);
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      search.set(key, value);
     }
   });
+
   return search.size ? `?${search.toString()}` : "";
 }
 
@@ -42,7 +41,7 @@ function unwrapResponse(payload) {
 
 function buildNetworkError(error) {
   if (error instanceof Error && error.name === "TypeError") {
-    return new Error(`Unable to reach the API at ${API_BASE_URL}. Check backend availability, LAN access, and CORS.`);
+    return new Error(`Unable to reach the API at ${API_BASE_URL}. Check backend availability and CORS.`);
   }
 
   return error;
@@ -50,18 +49,19 @@ function buildNetworkError(error) {
 
 async function request(path, options = {}) {
   const token = getToken();
-
   const headers = {
     Accept: "application/json",
     ...options.headers
   };
 
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
 
-  let res;
+  let response;
 
   try {
-    res = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
       headers
     });
@@ -69,13 +69,14 @@ async function request(path, options = {}) {
     throw buildNetworkError(error);
   }
 
-  const data = await res.json().catch(() => null);
+  const data = await response.json().catch(() => null);
 
-  if (!res.ok) {
-    if (res.status === 401) {
+  if (!response.ok) {
+    if (response.status === 401) {
       clearSession();
       window.location.replace("/login");
     }
+
     throw new Error(data?.message || "Request failed");
   }
 
@@ -84,25 +85,25 @@ async function request(path, options = {}) {
 
 async function downloadFile(path, fallbackName) {
   const token = getToken();
-  let res;
+  let response;
 
   try {
-    res = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(`${API_BASE_URL}${path}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     });
   } catch (error) {
     throw buildNetworkError(error);
   }
 
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
     throw new Error(data?.message || "Download failed");
   }
 
-  const blob = await res.blob();
+  const blob = await response.blob();
   const objectUrl = window.URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const disposition = res.headers.get("Content-Disposition") || "";
+  const disposition = response.headers.get("Content-Disposition") || "";
   const matchedName = /filename="?([^"]+)"?/i.exec(disposition)?.[1];
 
   link.href = objectUrl;
@@ -113,25 +114,22 @@ async function downloadFile(path, fallbackName) {
   window.URL.revokeObjectURL(objectUrl);
 }
 
-/* ================= AUTH ================= */
 export const loginUser = (data) =>
   request("/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data)
   });
-/* ================= CURRENT USER ================= */
-export const fetchCurrentUser = () =>
-  request("/auth/me");
-/* ================= ITEMS ================= */
-export const fetchItems = (p = {}) => request(`/items${buildQuery(p)}`);
-export const fetchAvailableInventory = (p = {}) => request(`/items/availability${buildQuery(p)}`);
+
+export const fetchCurrentUser = () => request("/auth/me");
+
+export const fetchItems = (params = {}) => request(`/items${buildQuery(params)}`);
+export const fetchAvailableInventory = (params = {}) => request(`/items/availability${buildQuery(params)}`);
 export const fetchInventoryStats = () => request("/items/stats");
 export const createItem = (data) => request("/items", { method: "POST", body: data });
 export const updateItem = (id, data) => request(`/items/${id}`, { method: "PUT", body: data });
 export const deleteItem = (id) => request(`/items/${id}`, { method: "DELETE" });
 
-/* ================= MOVEMENTS ================= */
 export const createStockMovement = (data) =>
   request("/stock-movements", {
     method: "POST",
@@ -151,15 +149,13 @@ export const deleteStockMovement = (id) =>
     method: "DELETE"
   });
 
-export const fetchDailyMovements = (p = {}) =>
-  request(`/movements/daily${buildQuery(p)}`);
+export const fetchDailyMovements = (params = {}) =>
+  request(`/movements/daily${buildQuery(params)}`);
 
-/* ================= REQUESTS ================= */
-export const fetchRequests = (p = {}) =>
-  request(`/requests${buildQuery(p)}`);
+export const fetchRequests = (params = {}) =>
+  request(`/requests${buildQuery(params)}`);
 
-export const fetchRequestLocations = () =>
-  request("/requests/locations");
+export const fetchRequestLocations = () => request("/requests/locations");
 
 export const createRequest = (data) =>
   request("/requests", {
@@ -174,12 +170,10 @@ export const approveRequest = (id) =>
 export const rejectRequest = (id) =>
   request(`/requests/${id}/reject`, { method: "POST" });
 
-/* ================= ALERTS ================= */
 export const fetchAlerts = () => request("/alerts");
 export const markAlertAsRead = (id) =>
   request(`/alerts/${id}/read`, { method: "PUT" });
 
-/* ================= MESSAGES ================= */
 export const fetchMessageUsers = () => request("/messages/users");
 export const fetchMessages = () => request("/messages");
 export const sendMessage = (data) =>
@@ -192,176 +186,172 @@ export const sendMessage = (data) =>
 export const markMessageAsRead = (id) =>
   request(`/messages/${id}/read`, { method: "PUT" });
 
-/* ================= SYSTEM ================= */
 export const fetchLocations = () => request("/system/locations");
-export const createLocation = (d) =>
+export const createLocation = (data) =>
   request("/system/locations", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const updateLocation = (id, d) =>
+export const updateLocation = (id, data) =>
   request(`/system/locations/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
 export const fetchCategories = () => request("/system/categories");
-export const createCategory = (d) =>
+export const createCategory = (data) =>
   request("/system/categories", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const updateCategory = (id, d) =>
+export const updateCategory = (id, data) =>
   request(`/system/categories/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
 export const fetchSuppliers = () => request("/system/suppliers");
-export const createSupplier = (d) =>
+export const createSupplier = (data) =>
   request("/system/suppliers", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const updateSupplier = (id, d) =>
+export const updateSupplier = (id, data) =>
   request(`/system/suppliers/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const fetchRecipients = (p = {}) =>
-  request(`/system/recipients${buildQuery(p)}`);
+export const fetchRecipients = (params = {}) =>
+  request(`/system/recipients${buildQuery(params)}`);
 
-export const createRecipient = (d) =>
+export const createRecipient = (data) =>
   request("/system/recipients", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const updateRecipient = (id, d) =>
+export const updateRecipient = (id, data) =>
   request(`/system/recipients/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
 export const fetchUnits = () => request("/system/units");
-export const createUnit = (d) =>
+export const createUnit = (data) =>
   request("/system/units", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const updateUnit = (id, d) =>
+export const updateUnit = (id, data) =>
   request(`/system/units/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
 export const fetchUsers = () => request("/system/users");
-export const createUser = (d) =>
+export const createUser = (data) =>
   request("/system/users", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const updateUser = (id, d) =>
+export const updateUser = (id, data) =>
   request(`/system/users/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
 export const fetchSections = (locationId) =>
   request(`/system/sections${buildQuery({ location_id: locationId })}`);
 
-export const createSection = (d) =>
+export const createSection = (data) =>
   request("/system/sections", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const updateSection = (id, d) =>
+export const updateSection = (id, data) =>
   request(`/system/sections/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
 export const fetchAssets = (locationId) =>
   request(`/system/assets${buildQuery({ location_id: locationId })}`);
 
-export const createAsset = (d) =>
+export const createAsset = (data) =>
   request("/system/assets", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const updateAsset = (id, d) =>
+export const updateAsset = (id, data) =>
   request(`/system/assets/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
 export const deleteMasterData = (table, id) =>
   request(`/system/${table}/${id}`, { method: "DELETE" });
 
-/* ================= MAINTENANCE ================= */
-export const createMaintenanceLog = (d) =>
+export const createMaintenanceLog = (data) =>
   request("/maintenance/log", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
-export const fetchMaintenanceHistory = (p = {}) =>
-  request(`/maintenance/history${buildQuery(p)}`);
+export const fetchMaintenanceHistory = (params = {}) =>
+  request(`/maintenance/history${buildQuery(params)}`);
 
 export const fetchMaintenanceItems = (id) =>
   request(`/maintenance/${id}/items`);
 
-/* ================= COUNTS ================= */
-export const createInventoryCount = (d) =>
+export const createInventoryCount = (data) =>
   request("/system/counts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(d)
+    body: JSON.stringify(data)
   });
 
 export const postInventoryCount = (id) =>
   request(`/system/counts/${id}/post`, { method: "POST" });
 
-/* ================= REPORTS ================= */
-export const fetchMovementReport = (p = {}) =>
-  request(`/reports/movements${buildQuery(p)}`);
+export const fetchMovementReport = (params = {}) =>
+  request(`/reports/movements${buildQuery(params)}`);
 
-export const fetchInventoryValueReport = (p = {}) =>
-  request(`/reports/inventory-value${buildQuery(p)}`);
+export const fetchInventoryValueReport = (params = {}) =>
+  request(`/reports/inventory-value${buildQuery(params)}`);
 
-export const downloadMovementReportPdf = (p = {}) =>
-  downloadFile(`/reports/movements/pdf${buildQuery(p)}`, "item-movement-report.pdf");
+export const downloadMovementReportPdf = (params = {}) =>
+  downloadFile(`/reports/movements/pdf${buildQuery(params)}`, "item-movement-report.pdf");
 
-export const downloadMovementReportCsv = (p = {}) =>
-  downloadFile(`/reports/movements/csv${buildQuery(p)}`, "item-movement-report.csv");
+export const downloadMovementReportCsv = (params = {}) =>
+  downloadFile(`/reports/movements/csv${buildQuery(params)}`, "item-movement-report.csv");
 
-export const downloadMovementReportExcel = (p = {}) =>
-  downloadFile(`/reports/movements/excel${buildQuery(p)}`, "item-movement-report.xlsx");
+export const downloadMovementReportExcel = (params = {}) =>
+  downloadFile(`/reports/movements/excel${buildQuery(params)}`, "item-movement-report.xlsx");
 
 export const createIssue = (data) =>
   request("/issues", {

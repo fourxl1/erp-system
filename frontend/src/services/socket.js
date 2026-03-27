@@ -1,26 +1,11 @@
 import { io } from "socket.io-client";
 
 let socket;
-
-function resolveSocketUrl() {
-  const configured = import.meta.env.VITE_SOCKET_URL?.trim();
-
-  if (configured) {
-    return configured.replace(/\/+$/, "");
-  }
-
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-
-  if (apiBaseUrl) {
-    return apiBaseUrl.replace(/\/api\/?$/, "").replace(/\/+$/, "");
-  }
-
-  return `http://${window.location.hostname}:5000`;
-}
+const SOCKET_URL = "http://161.35.213.198:5000";
 
 export function getSocket() {
   if (!socket) {
-    socket = io(resolveSocketUrl(), {
+    socket = io(SOCKET_URL, {
       autoConnect: false,
       auth: {
         token: localStorage.getItem("token") || ""
