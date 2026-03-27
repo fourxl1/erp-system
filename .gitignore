@@ -1,0 +1,12 @@
+.env
+backend/.env
+backend/logs/
+backend/uploads/
+backend/node_modules/
+frontend/node_modules/
+frontend/dist/
+.codex-runtime/
+*.log
+*.err.log
+*.out.log
+

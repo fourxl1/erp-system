@@ -1,0 +1,64 @@
+const reportService = require("../services/reportService");
+const { asyncHandler, sendSuccess } = require("../utils/http");
+
+function getReportFilters(req) {
+  return {
+    itemId: req.query.item_id,
+    categoryId: req.query.category_id,
+    recipientId: req.query.recipient_id,
+    locationId: req.query.location_id,
+    movementType: req.query.movement_type,
+    startDate: req.query.start_date,
+    endDate: req.query.end_date
+  };
+}
+
+const getMovementReport = asyncHandler(async (req, res) => {
+  const report = await reportService.getMovementReport(getReportFilters(req), req.user);
+  return sendSuccess(res, report);
+});
+
+const exportMovementReportPdf = asyncHandler(async (req, res) => {
+  const report = await reportService.getMovementReport(getReportFilters(req), req.user);
+  return reportService.renderMovementPdf(report, res);
+});
+
+const exportMovementReportCsv = asyncHandler(async (req, res) => {
+  const csv = await reportService.exportMovementReportCsv(getReportFilters(req), req.user);
+
+  res.header("Content-Type", "text/csv");
+  res.attachment("item-movement-report.csv");
+  return res.send(csv);
+});
+
+const exportMovementReportExcel = asyncHandler(async (req, res) => {
+  const workbook = await reportService.exportMovementReportExcel(getReportFilters(req), req.user);
+
+  res.header(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.attachment("item-movement-report.xlsx");
+  return res.send(Buffer.from(workbook));
+});
+
+const getInventoryValueReport = asyncHandler(async (req, res) => {
+  const rows = await reportService.getInventoryValue(
+    {
+      itemId: req.query.item_id,
+      categoryId: req.query.category_id,
+      locationId: req.query.location_id
+    },
+    req.user
+  );
+
+  return sendSuccess(res, rows);
+});
+
+module.exports = {
+  getMovementReport,
+  exportMovementReportPdf,
+  exportMovementReportCsv,
+  exportMovementReportExcel,
+  getInventoryValueReport
+};
