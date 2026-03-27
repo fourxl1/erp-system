@@ -29,7 +29,7 @@ const allowedOrigins = getAllowedOrigins();
 app.use(
   cors({
     origin(origin, callback) {
-      if (isAllowedOrigin(origin, allowedOrigins)) {
+      if (!origin || isAllowedOrigin(origin, allowedOrigins)) {
         return callback(null, true);
       }
       const error = new Error("Origin not allowed by CORS");
@@ -84,7 +84,7 @@ const authLimiter = rateLimit({
 app.use("/api/auth/login", authLimiter);
 
 /* =========================
-   🔥 STATIC FILES (FIXED)
+   STATIC FILES
 ========================= */
 app.use(
   "/uploads",
@@ -94,13 +94,6 @@ app.use(
     dotfiles: "deny"
   })
 );
-
-/* =========================
-   ROOT ROUTE
-========================= */
-app.get("/", (req, res) => {
-  res.send("Inventory & Maintenance Management System API is running...");
-});
 
 /* =========================
    API ROUTES
@@ -119,6 +112,16 @@ app.use("/api/alerts", alertRoutes);
 app.use("/api/system", systemRoutes);
 app.use("/api/recipients", recipientRoutes);
 app.use("/api/issues", issueRoutes);
+
+/* =========================
+   🔥 SERVE FRONTEND (IMPORTANT)
+========================= */
+app.use(express.static(path.join(__dirname, "../frontend/dist")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "../frontend/dist/index.html"));
+});
+
 /* =========================
    ERROR HANDLING
 ========================= */
