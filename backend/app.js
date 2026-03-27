@@ -17,6 +17,7 @@ const alertRoutes = require("./routes/alertRoutes");
 const systemRoutes = require("./routes/systemRoutes");
 const recipientRoutes = require("./routes/recipientRoutes");
 const issueRoutes = require("./routes/issueRoutes");
+
 const { notFound, errorHandler } = require("./middleware/errorMiddleware");
 const { getAllowedOrigins, isAllowedOrigin } = require("./utils/originPolicy");
 
@@ -84,7 +85,7 @@ const authLimiter = rateLimit({
 app.use("/api/auth/login", authLimiter);
 
 /* =========================
-   STATIC FILES
+   STATIC FILES (UPLOADS)
 ========================= */
 app.use(
   "/uploads",
@@ -114,16 +115,21 @@ app.use("/api/recipients", recipientRoutes);
 app.use("/api/issues", issueRoutes);
 
 /* =========================
-   🔥 SERVE FRONTEND (IMPORTANT)
+   🔥 SERVE FRONTEND (FINAL FIX)
 ========================= */
 app.use(express.static(path.join(__dirname, "../frontend/dist")));
 
-app.get("*", (req, res) => {
+app.get("*", (req, res, next) => {
+  // allow API routes to pass through
+  if (req.originalUrl.startsWith("/api")) {
+    return next();
+  }
+
   res.sendFile(path.join(__dirname, "../frontend/dist/index.html"));
 });
 
 /* =========================
-   ERROR HANDLING
+   ERROR HANDLING (ALWAYS LAST)
 ========================= */
 app.use(notFound);
 app.use(errorHandler);
