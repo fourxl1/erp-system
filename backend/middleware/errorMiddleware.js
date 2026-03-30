@@ -1,3 +1,5 @@
+const { sendError } = require("../utils/http");
+
 function normalizeDatabaseError(error) {
   if (!error || error.statusCode) {
     return error;
@@ -51,16 +53,9 @@ function errorHandler(error, req, res, next) {
 
   console.error(normalizedError);
 
-  const payload = {
-    success: false,
-    message: normalizedError.message || "Internal server error"
-  };
-
-  if (Array.isArray(normalizedError.details) && normalizedError.details.length > 0) {
-    payload.errors = normalizedError.details;
-  }
-
-  return res.status(normalizedError.statusCode || 500).json(payload);
+  return sendError(res, normalizedError.statusCode || 500, normalizedError.message, {
+    errors: normalizedError.details
+  });
 }
 
 module.exports = {

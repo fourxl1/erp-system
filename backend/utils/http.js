@@ -18,18 +18,30 @@ function createHttpError(statusCode, message, details) {
 function sendSuccess(res, data, options = {}) {
   const payload = {
     success: true,
+    message: options.message || "",
     data
   };
 
-  if (options.message) {
-    payload.message = options.message;
+  return res.status(options.statusCode || 200).json(payload);
+}
+
+function sendError(res, statusCode, message, options = {}) {
+  const payload = {
+    success: false,
+    message: message || "Request failed",
+    data: options.data === undefined ? null : options.data
+  };
+
+  if (Array.isArray(options.errors) && options.errors.length > 0) {
+    payload.errors = options.errors;
   }
 
-  return res.status(options.statusCode || 200).json(payload);
+  return res.status(statusCode || 500).json(payload);
 }
 
 module.exports = {
   asyncHandler,
   createHttpError,
-  sendSuccess
+  sendSuccess,
+  sendError
 };

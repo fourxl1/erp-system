@@ -1,11 +1,10 @@
-const fs = require("fs");
-const path = require("path");
 const PDFDocument = require("pdfkit");
 const ExcelJS = require("exceljs");
 const { Parser } = require("json2csv");
 const { query } = require("../config/db");
 const { calculateAverageCost } = require("../utils/averageCost");
 const { toPublicMovementType } = require("../utils/movementTypes");
+const { resolveItemImageFilePath } = require("../utils/itemImage");
 
 function applyLocationScope(filters, user) {
   if (user.role_code === "ADMIN" && user.location_id) {
@@ -19,19 +18,7 @@ function applyLocationScope(filters, user) {
 }
 
 function resolveLocalReportImagePath(imagePath) {
-  if (!imagePath) {
-    return null;
-  }
-
-  const uploadsRoot = path.resolve(__dirname, "..", "uploads", "items");
-  const normalizedPath = String(imagePath).replace(/^\/+/, "");
-  const localPath = path.resolve(__dirname, "..", normalizedPath);
-
-  if (!localPath.startsWith(`${uploadsRoot}${path.sep}`)) {
-    return null;
-  }
-
-  return fs.existsSync(localPath) ? localPath : null;
+  return resolveItemImageFilePath(imagePath);
 }
 
 async function getMovementReport(filters, user) {

@@ -1,5 +1,17 @@
 const movementService = require("../services/movementService");
 const { asyncHandler, sendSuccess } = require("../utils/http");
+const { buildItemImageUrl } = require("../utils/itemImage");
+
+function serializeMovement(movement, req) {
+  if (!movement) {
+    return movement;
+  }
+
+  return {
+    ...movement,
+    item_image: buildItemImageUrl(req, movement.item_image)
+  };
+}
 
 const recordMovement = asyncHandler(async (req, res) => {
   const payload = {
@@ -59,7 +71,9 @@ const getMovements = asyncHandler(async (req, res) => {
 
   return sendSuccess(res, {
     count: movements.length,
-    movements: movements.map(movementService.normalizeMovementRecord)
+    movements: movements.map((movement) =>
+      serializeMovement(movementService.normalizeMovementRecord(movement), req)
+    )
   });
 });
 
@@ -74,7 +88,12 @@ const getDailyMovements = asyncHandler(async (req, res) => {
     req.user
   );
 
-  return sendSuccess(res, movements.map(movementService.normalizeMovementRecord));
+  return sendSuccess(
+    res,
+    movements.map((movement) =>
+      serializeMovement(movementService.normalizeMovementRecord(movement), req)
+    )
+  );
 });
 
 const updateMovement = asyncHandler(async (req, res) => {

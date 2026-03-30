@@ -166,11 +166,19 @@ export const createRequest = (data) =>
     body: JSON.stringify(data)
   });
 
-export const approveRequest = (id) =>
-  request(`/requests/${id}/approve`, { method: "POST" });
+export const approveRequest = (id, data = {}) =>
+  request(`/requests/${id}/approve`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
 
-export const rejectRequest = (id) =>
-  request(`/requests/${id}/reject`, { method: "POST" });
+export const rejectRequest = (id, data = {}) =>
+  request(`/requests/${id}/reject`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
 
 export const fetchAlerts = () => request("/alerts");
 export const markAlertAsRead = (id) =>

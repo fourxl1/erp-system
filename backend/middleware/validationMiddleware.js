@@ -1,4 +1,5 @@
 const { PUBLIC_MOVEMENT_TYPES, normalizeIncomingMovementType } = require("../utils/movementTypes");
+const { sendError } = require("../utils/http");
 
 function isBlank(value) {
   return value === undefined || value === null || String(value).trim() === "";
@@ -94,11 +95,7 @@ function validate(schema = {}) {
     }
 
     if (errors.length) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors
-      });
+      return sendError(res, 400, "Validation failed", { errors });
     }
 
     return next();

@@ -1,5 +1,5 @@
-require('dotenv').config();
-const { query } = require('./config/db');
+require("dotenv").config();
+const { query } = require("../config/db");
 
 async function run() {
   try {
@@ -12,10 +12,9 @@ async function run() {
       DROP COLUMN IF EXISTS cost_euro,
       DROP COLUMN IF EXISTS image_url
     `);
-    console.log("Redundant columns dropped from items table");
-
-  } catch (err) {
-    console.error(err);
+  } catch (error) {
+    process.stderr.write(`${error.stack || error.message}\n`);
+    process.exitCode = 1;
   } finally {
     process.exit();
   }

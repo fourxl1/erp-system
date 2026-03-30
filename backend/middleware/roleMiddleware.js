@@ -1,3 +1,5 @@
+const { sendError } = require("../utils/http");
+
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
 }
@@ -7,26 +9,17 @@ function authorizeRoles(...allowedRoles) {
 
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. No user information found."
-      });
+      return sendError(res, 403, "Access denied. No user information found.");
     }
 
     const currentRole = normalizeRole(req.user.role_name);
 
     if (!currentRole) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. User role is unavailable."
-      });
+      return sendError(res, 403, "Access denied. User role is unavailable.");
     }
 
     if (currentRole !== "superadmin" && !normalized.has(currentRole)) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. You do not have permission."
-      });
+      return sendError(res, 403, "Access denied. You do not have permission.");
     }
 
     next();

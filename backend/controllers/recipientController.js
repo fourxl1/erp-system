@@ -1,13 +1,9 @@
 const { query } = require("../config/db");
-const { asyncHandler, createHttpError } = require("../utils/http");
+const { asyncHandler, createHttpError, sendSuccess } = require("../utils/http");
 
 const getRecipients = asyncHandler(async (req, res) => {
   const result = await query("SELECT * FROM recipients ORDER BY id DESC");
-
-  return res.json({
-    success: true,
-    data: result.rows
-  });
+  return sendSuccess(res, result.rows);
 });
 
 const createRecipient = asyncHandler(async (req, res) => {
@@ -26,9 +22,9 @@ const createRecipient = asyncHandler(async (req, res) => {
     [name, department]
   );
 
-  return res.status(201).json({
-    success: true,
-    data: result.rows[0]
+  return sendSuccess(res, result.rows[0], {
+    statusCode: 201,
+    message: "Recipient created successfully"
   });
 });
 

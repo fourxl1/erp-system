@@ -1,5 +1,6 @@
 const reportService = require("../services/reportService");
 const { asyncHandler, sendSuccess } = require("../utils/http");
+const { buildItemImageUrl } = require("../utils/itemImage");
 
 function getReportFilters(req) {
   return {
@@ -15,7 +16,19 @@ function getReportFilters(req) {
 
 const getMovementReport = asyncHandler(async (req, res) => {
   const report = await reportService.getMovementReport(getReportFilters(req), req.user);
-  return sendSuccess(res, report);
+  return sendSuccess(res, {
+    ...report,
+    item: report.item
+      ? {
+          ...report.item,
+          itemImage: buildItemImageUrl(req, report.item.itemImage)
+        }
+      : null,
+    movements: report.movements.map((movement) => ({
+      ...movement,
+      item_image: buildItemImageUrl(req, movement.item_image)
+    }))
+  });
 });
 
 const exportMovementReportPdf = asyncHandler(async (req, res) => {
@@ -52,7 +65,13 @@ const getInventoryValueReport = asyncHandler(async (req, res) => {
     req.user
   );
 
-  return sendSuccess(res, rows);
+  return sendSuccess(
+    res,
+    rows.map((row) => ({
+      ...row,
+      item_image: buildItemImageUrl(req, row.item_image)
+    }))
+  );
 });
 
 module.exports = {

@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const { query } = require("../config/db");
+const { sendError } = require("../utils/http");
 
 function ensureJwtConfigured() {
   if (!process.env.JWT_SECRET) {
@@ -51,19 +52,13 @@ async function protect(req, res, next) {
   try {
     ensureJwtConfigured();
   } catch (error) {
-    return res.status(error.statusCode || 500).json({
-      success: false,
-      message: error.message
-    });
+    return sendError(res, error.statusCode || 500, error.message);
   }
 
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({
-      success: false,
-      message: "Not authorized, token missing"
-    });
+    return sendError(res, 401, "Not authorized, token missing");
   }
 
   const token = authHeader.split(" ")[1];
@@ -72,20 +67,14 @@ async function protect(req, res, next) {
   try {
     decoded = jwt.verify(token, process.env.JWT_SECRET);
   } catch (error) {
-    return res.status(401).json({
-      success: false,
-      message: "Not authorized, invalid token"
-    });
+    return sendError(res, 401, "Not authorized, invalid token");
   }
 
   try {
     const user = await loadActiveUserById(decoded.id, decoded);
 
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Not authorized, user not found"
-      });
+      return sendError(res, 401, "Not authorized, user not found");
     }
 
     req.user = user;

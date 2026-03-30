@@ -23,6 +23,11 @@ const { getAllowedOrigins, isAllowedOrigin } = require("./utils/originPolicy");
 
 const app = express();
 const allowedOrigins = getAllowedOrigins();
+const staticFileOptions = {
+  fallthrough: true,
+  index: false,
+  dotfiles: "deny"
+};
 
 /* =========================
    CORS CONFIG
@@ -96,11 +101,18 @@ app.use("/api/auth/login", authLimiter);
    STATIC FILES (UPLOADS)
 ========================= */
 app.use(
+  "/uploads/items",
+  express.static(path.join(__dirname, "uploads", "items"), staticFileOptions)
+);
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "uploads", "items"), staticFileOptions)
+);
+app.use(
   "/uploads",
   express.static(path.join(__dirname, "uploads"), {
-    fallthrough: false,
-    index: false,
-    dotfiles: "deny"
+    ...staticFileOptions,
+    fallthrough: false
   })
 );
 

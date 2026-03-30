@@ -1,5 +1,6 @@
 const movementService = require("../services/movementService");
 const { asyncHandler, sendSuccess } = require("../utils/http");
+const { buildItemImageUrl } = require("../utils/itemImage");
 
 const logMaintenance = asyncHandler(async (req, res) => {
   const maintenance = await movementService.logMaintenance(req.body, req.user);
@@ -36,7 +37,13 @@ const getAssetMaintenanceHistory = asyncHandler(async (req, res) => {
 
 const getMaintenanceItems = asyncHandler(async (req, res) => {
   const items = await movementService.getMaintenanceItemsForUser(req.params.id, req.user);
-  return sendSuccess(res, items);
+  return sendSuccess(
+    res,
+    items.map((item) => ({
+      ...item,
+      item_image: buildItemImageUrl(req, item.item_image)
+    }))
+  );
 });
 
 module.exports = {
