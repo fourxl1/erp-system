@@ -24,7 +24,11 @@ function isOutgoingMovement(movement) {
   }
 
   const normalizedType = String(movement.movement_type || "").trim().toUpperCase();
-  return normalizedType === "STOCK_OUT" || normalizedType === "MAINTENANCE" || normalizedType === "ASSET_ISSUE";
+  return (
+    normalizedType === "STOCK_OUT" ||
+    normalizedType === "MAINTENANCE" ||
+    normalizedType === "ASSET_ISSUE"
+  );
 }
 
 function Reports() {
@@ -50,14 +54,15 @@ function Reports() {
   const loadData = useCallback(async (activeFilters) => {
     try {
       setLoading(true);
-      const [valueData, movementData, itemData, categoryData, locationData, recipientData] = await Promise.all([
-        fetchInventoryValueReport(activeFilters),
-        fetchMovementReport(activeFilters),
-        fetchItems(),
-        fetchCategories(),
-        fetchLocations(),
-        fetchRecipients()
-      ]);
+      const [valueData, movementData, itemData, categoryData, locationData, recipientData] =
+        await Promise.all([
+          fetchInventoryValueReport(activeFilters),
+          fetchMovementReport(activeFilters),
+          fetchItems(),
+          fetchCategories(),
+          fetchLocations(),
+          fetchRecipients()
+        ]);
 
       setInventoryValue(Array.isArray(valueData) ? valueData : []);
       setReport(movementData || { header: null, item: null, movements: [] });
@@ -94,8 +99,14 @@ function Reports() {
     }
   }
 
-  const totalValuation = inventoryValue.reduce((sum, row) => sum + Number(row.total_value || 0), 0);
-  const totalMovementValue = report.movements.reduce((sum, row) => sum + Number(row.total_cost || 0), 0);
+  const totalValuation = inventoryValue.reduce(
+    (sum, row) => sum + Number(row.total_value || 0),
+    0
+  );
+  const totalMovementValue = report.movements.reduce(
+    (sum, row) => sum + Number(row.total_cost || 0),
+    0
+  );
 
   const movementTypeOptions = useMemo(
     () => [
@@ -112,14 +123,12 @@ function Reports() {
 
   return (
     <DashboardLayout>
-      <div className="inventory-shell space-y-6">
-        <section className="inventory-hero">
+      <div className="inventory-shell space-y-6 reports-page">
+        <section className="inventory-hero inventory-hero--compact reports-page__hero">
           <div className="inventory-hero__content">
             <p className="inventory-hero__eyebrow">Analytics Center</p>
             <h2 className="inventory-hero__title">Inventory and Movement Intelligence</h2>
-            <p className="inventory-hero__copy">
-              Monitor valuation, track stock flow, inspect report images, and export professional reports.
-            </p>
+            <p className="inventory-hero__copy">Generate reports.</p>
           </div>
           <div className="inventory-hero__stats">
             <article>
@@ -151,7 +160,7 @@ function Reports() {
           </div>
         ) : null}
 
-        <section className="inventory-card">
+        <section className="inventory-card reports-page__filters">
           <div className="inventory-card__header">
             <div>
               <p className="dashboard-card__eyebrow">Parameter Selection</p>
@@ -160,10 +169,15 @@ function Reports() {
           </div>
 
           <div className="inventory-card__body">
-            <div className="admin-grid admin-grid--reports" style={{ gap: "1.5rem" }}>
+            <div className="admin-grid admin-grid--reports reports-page__filters-grid">
               <label className="field">
                 <span>Target Item</span>
-                <select name="item_id" value={filters.item_id} onChange={handleFilterChange} className="inventory-input">
+                <select
+                  name="item_id"
+                  value={filters.item_id}
+                  onChange={handleFilterChange}
+                  className="inventory-input"
+                >
                   <option value="">All Items</option>
                   {items.map((item) => (
                     <option key={item.id} value={item.id}>
@@ -175,7 +189,12 @@ function Reports() {
 
               <label className="field">
                 <span>Category</span>
-                <select name="category_id" value={filters.category_id} onChange={handleFilterChange} className="inventory-input">
+                <select
+                  name="category_id"
+                  value={filters.category_id}
+                  onChange={handleFilterChange}
+                  className="inventory-input"
+                >
                   <option value="">All Categories</option>
                   {categories.map((category) => (
                     <option key={category.id} value={category.id}>
@@ -187,7 +206,12 @@ function Reports() {
 
               <label className="field">
                 <span>Location</span>
-                <select name="location_id" value={filters.location_id} onChange={handleFilterChange} className="inventory-input">
+                <select
+                  name="location_id"
+                  value={filters.location_id}
+                  onChange={handleFilterChange}
+                  className="inventory-input"
+                >
                   <option value="">All Locations</option>
                   {locations.map((location) => (
                     <option key={location.id} value={location.id}>
@@ -199,7 +223,12 @@ function Reports() {
 
               <label className="field">
                 <span>Recipient</span>
-                <select name="recipient_id" value={filters.recipient_id} onChange={handleFilterChange} className="inventory-input">
+                <select
+                  name="recipient_id"
+                  value={filters.recipient_id}
+                  onChange={handleFilterChange}
+                  className="inventory-input"
+                >
                   <option value="">All Recipients</option>
                   {recipients.map((recipient) => (
                     <option key={recipient.id} value={recipient.id}>
@@ -227,16 +256,33 @@ function Reports() {
 
               <label className="field">
                 <span>Start Date</span>
-                <input type="date" name="start_date" value={filters.start_date} onChange={handleFilterChange} className="inventory-input" />
+                <input
+                  type="date"
+                  name="start_date"
+                  value={filters.start_date}
+                  onChange={handleFilterChange}
+                  className="inventory-input"
+                />
               </label>
 
               <label className="field">
                 <span>End Date</span>
-                <input type="date" name="end_date" value={filters.end_date} onChange={handleFilterChange} className="inventory-input" />
+                <input
+                  type="date"
+                  name="end_date"
+                  value={filters.end_date}
+                  onChange={handleFilterChange}
+                  className="inventory-input"
+                />
               </label>
 
-              <div style={{ alignSelf: "end" }}>
-                <button type="button" className="primary-button" style={{ width: "100%" }} onClick={() => loadData(filters)} disabled={loading}>
+              <div className="reports-page__submit">
+                <button
+                  type="button"
+                  className="primary-button reports-page__submit-button"
+                  onClick={() => loadData(filters)}
+                  disabled={loading}
+                >
                   {loading ? "Processing..." : "Generate Analysis"}
                 </button>
               </div>
@@ -244,7 +290,7 @@ function Reports() {
           </div>
         </section>
 
-        <section className="inventory-panel">
+        <section className="inventory-panel reports-page__panel">
           <div className="inventory-panel__header">
             <div>
               <p className="dashboard-card__eyebrow">Financial Snapshot</p>
@@ -252,7 +298,7 @@ function Reports() {
             </div>
           </div>
           <div className="inventory-table-wrapper">
-            <table className="inventory-table">
+            <table className="inventory-table reports-page__table">
               <thead>
                 <tr>
                   <th>Image</th>
@@ -286,7 +332,9 @@ function Reports() {
                               <img src={imageSrc} alt={row.item} />
                             </button>
                           ) : (
-                            <div className="report-thumb report-thumb--empty">{row.item.charAt(0).toUpperCase()}</div>
+                            <div className="report-thumb report-thumb--empty">
+                              {row.item.charAt(0).toUpperCase()}
+                            </div>
                           )}
                         </td>
                         <td>{row.item}</td>
@@ -294,7 +342,9 @@ function Reports() {
                         <td className="text-right">
                           <strong>{row.current_quantity}</strong>
                         </td>
-                        <td className="text-right">${Number(row.average_cost || 0).toFixed(2)}</td>
+                        <td className="text-right">
+                          ${Number(row.average_cost || 0).toFixed(2)}
+                        </td>
                         <td className="text-right">
                           <strong>${Number(row.total_value || 0).toFixed(2)}</strong>
                         </td>
@@ -307,38 +357,57 @@ function Reports() {
           </div>
         </section>
 
-        <section className="inventory-panel">
+        <section className="inventory-panel reports-page__panel">
           <div className="inventory-panel__header">
             <div>
               <p className="dashboard-card__eyebrow">Activity Logs</p>
               <h3>Movement History</h3>
             </div>
-            <div className="inventory-card__actions">
-              <button type="button" className="secondary-button secondary-button--small" onClick={() => handleExport(downloadMovementReportPdf)}>
+            <div className="inventory-card__actions reports-page__exports">
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() => handleExport(downloadMovementReportPdf)}
+              >
                 Export PDF
               </button>
-              <button type="button" className="secondary-button secondary-button--small" onClick={() => handleExport(downloadMovementReportCsv)}>
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() => handleExport(downloadMovementReportCsv)}
+              >
                 Export CSV
               </button>
-              <button type="button" className="secondary-button secondary-button--small" onClick={() => handleExport(downloadMovementReportExcel)}>
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() => handleExport(downloadMovementReportExcel)}
+              >
                 Export Excel
               </button>
             </div>
           </div>
 
           {report.header ? (
-            <div className="report-context-bar">
+            <div className="report-context-bar reports-page__context">
               <div className="report-context-bar__main">
                 <div>
-                  <small className="report-context-bar__eyebrow">{report.header.reportTitle}</small>
-                  <strong className="report-context-bar__company">{report.header.companyName}</strong>
+                  <small className="report-context-bar__eyebrow">
+                    {report.header.reportTitle}
+                  </small>
+                  <strong className="report-context-bar__company">
+                    {report.header.companyName}
+                  </strong>
                 </div>
 
                 {report.item ? (
                   <div className="report-context-bar__item">
                     <div className="report-context-bar__thumb">
                       {report.item.itemImage ? (
-                        <img src={getImageSrc(report.item.itemImage)} alt={report.item.itemName} />
+                        <img
+                          src={getImageSrc(report.item.itemImage)}
+                          alt={report.item.itemName}
+                        />
                       ) : (
                         <span>{report.item.itemName?.charAt(0).toUpperCase() || "?"}</span>
                       )}
@@ -346,7 +415,8 @@ function Reports() {
                     <div className="report-context-bar__item-meta">
                       <strong>{report.item.itemName}</strong>
                       <span>
-                        {report.item.category || "Uncategorized"}{report.item.unit ? ` • ${report.item.unit}` : ""}
+                        {report.item.category || "Uncategorized"}
+                        {report.item.unit ? ` | ${report.item.unit}` : ""}
                       </span>
                     </div>
                   </div>
@@ -363,7 +433,7 @@ function Reports() {
           ) : null}
 
           <div className="inventory-table-wrapper">
-            <table className="inventory-table">
+            <table className="inventory-table reports-page__table reports-page__table--movements">
               <thead>
                 <tr>
                   <th>Image</th>
@@ -405,8 +475,8 @@ function Reports() {
                             </div>
                           )}
                         </td>
-                        <td style={{ minWidth: "220px" }}>
-                          <div style={{ fontSize: "0.75rem", color: "var(--brand-muted)", marginBottom: "0.25rem" }}>
+                        <td className="reports-page__movement-cell">
+                          <div className="reports-page__timestamp">
                             {new Date(movement.date).toLocaleString()}
                           </div>
                           <strong>{movement.item_name}</strong>
@@ -426,11 +496,11 @@ function Reports() {
                         </td>
                         <td className="text-right">
                           <span
-                            style={{
-                              fontWeight: 700,
-                              fontSize: "1.1rem",
-                              color: outgoing ? "#b91c1c" : "#15803d"
-                            }}
+                            className={`reports-page__quantity ${
+                              outgoing
+                                ? "reports-page__quantity--out"
+                                : "reports-page__quantity--in"
+                            }`}
                           >
                             {outgoing ? "-" : "+"}
                             {movement.quantity}
@@ -442,19 +512,23 @@ function Reports() {
                           <strong>${Number(movement.total_cost || 0).toFixed(2)}</strong>
                         </td>
                         <td>
-                          <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>{movement.asset || "No Asset"}</div>
-                          <div style={{ fontSize: "0.75rem", color: "var(--brand-muted)" }}>
+                          <div className="reports-page__meta-primary">
+                            {movement.asset || "No Asset"}
+                          </div>
+                          <div className="reports-page__meta-secondary">
                             Ref: {movement.reference || "N/A"}
                           </div>
-                          <div style={{ fontSize: "0.75rem", color: "var(--brand-muted)" }}>
+                          <div className="reports-page__meta-secondary">
                             Sec: {movement.section || "N/A"}
                           </div>
-                          <div style={{ fontSize: "0.75rem", color: "var(--brand-muted)" }}>
+                          <div className="reports-page__meta-secondary">
                             Recipient: {movement.recipient || "N/A"}
                           </div>
                         </td>
                         <td>
-                          <div style={{ fontSize: "0.85rem" }}>{movement.entered_by}</div>
+                          <div className="reports-page__meta-primary">
+                            {movement.entered_by}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -474,8 +548,15 @@ function Reports() {
 
       {previewImage ? (
         <div className="modal-overlay" onClick={() => setPreviewImage(null)}>
-          <div className="report-lightbox" onClick={(event) => event.stopPropagation()}>
-            <button type="button" className="report-lightbox__close" onClick={() => setPreviewImage(null)}>
+          <div
+            className="report-lightbox"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="report-lightbox__close"
+              onClick={() => setPreviewImage(null)}
+            >
               x
             </button>
             <img src={previewImage.src} alt={previewImage.alt} />

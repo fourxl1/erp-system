@@ -100,7 +100,7 @@ async function getItemById(id, locationId = null) {
 
   if (locationId) {
     values.push(locationId);
-    movementJoin = `JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.length}::BIGINT`;
+    movementJoin = `LEFT JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.length}::BIGINT`;
     balanceLocationClause = ` AND b.location_id = $${values.length}::BIGINT`;
   }
 
@@ -159,7 +159,7 @@ async function getAllItems(filters = {}) {
   const { whereClause, values } = buildItemFilters(filters);
   const locationJoin =
     filters.locationId
-      ? `JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.push(filters.locationId)}::BIGINT`
+      ? `LEFT JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.push(filters.locationId)}::BIGINT`
       : "LEFT JOIN inventory_balance b ON b.item_id = i.id";
 
   const result = await query(

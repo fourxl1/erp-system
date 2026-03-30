@@ -2343,3 +2343,220 @@
     display: none;
   }
 }
+
+.reports-page__hero {
+  padding: 1rem 1.15rem;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.reports-page__hero .inventory-hero__content {
+  max-width: 34rem;
+}
+
+.reports-page__hero .inventory-hero__title {
+  font-size: clamp(1.35rem, 2.4vw, 1.95rem);
+}
+
+.reports-page__hero .inventory-hero__copy {
+  max-width: 24rem;
+  font-size: 0.9rem;
+}
+
+.reports-page__hero .inventory-hero__stats {
+  min-width: min(100%, 24rem);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.reports-page__hero .inventory-hero__stats article {
+  padding: 0.55rem 0.7rem;
+  border-radius: 12px;
+}
+
+.reports-page__hero .inventory-hero__stats p {
+  font-size: 0.66rem;
+}
+
+.reports-page__hero .inventory-hero__stats strong {
+  margin-top: 0.2rem;
+  font-size: 1.02rem;
+}
+
+.reports-page__filters,
+.reports-page__panel {
+  padding: 1rem 1.05rem;
+  border-radius: 20px;
+  gap: 0.75rem;
+}
+
+.reports-page__filters-grid {
+  gap: 0.8rem;
+}
+
+.reports-page__filters .field {
+  gap: 0.35rem;
+}
+
+.reports-page__filters .field span {
+  font-size: 0.8rem;
+}
+
+.reports-page__filters .inventory-input {
+  min-height: 2.8rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+}
+
+.reports-page__submit {
+  align-self: end;
+}
+
+.reports-page__submit-button {
+  width: 100%;
+  min-height: 2.8rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  font-size: 0.88rem;
+}
+
+.reports-page__exports {
+  gap: 0.45rem;
+}
+
+.reports-page__exports .secondary-button--small {
+  padding: 0.45rem 0.7rem;
+  border-radius: 10px;
+  font-size: 0.76rem;
+}
+
+.reports-page__context {
+  margin-bottom: 0.9rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 16px;
+  gap: 0.75rem;
+}
+
+.reports-page__table {
+  min-width: 920px;
+}
+
+.reports-page__table th,
+.reports-page__table td {
+  padding: 0.65rem 0.7rem;
+  font-size: 0.84rem;
+}
+
+.reports-page__table thead th {
+  font-size: 0.72rem;
+}
+
+.reports-page__table .status-chip {
+  padding: 0.22rem 0.5rem;
+  font-size: 0.72rem;
+}
+
+.reports-page .report-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+}
+
+.reports-page .report-thumb--empty {
+  font-size: 0.9rem;
+}
+
+.reports-page .report-context-bar__company {
+  font-size: 0.92rem;
+}
+
+.reports-page .report-context-bar__item {
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  border-radius: 14px;
+  gap: 0.65rem;
+}
+
+.reports-page .report-context-bar__thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.reports-page .report-context-bar__item-meta strong {
+  font-size: 0.92rem;
+}
+
+.reports-page .report-context-bar__item-meta span,
+.reports-page .report-context-bar__range small {
+  font-size: 0.76rem;
+}
+
+.reports-page .report-context-bar__range span {
+  font-size: 0.84rem;
+}
+
+.reports-page__movement-cell {
+  min-width: 180px;
+}
+
+.reports-page__timestamp {
+  margin-bottom: 0.2rem;
+  color: var(--brand-muted);
+  font-size: 0.7rem;
+}
+
+.reports-page__quantity {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.reports-page__quantity--out {
+  color: #b91c1c;
+}
+
+.reports-page__quantity--in {
+  color: #15803d;
+}
+
+.reports-page__meta-primary {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.reports-page__meta-secondary {
+  color: var(--brand-muted);
+  font-size: 0.72rem;
+}
+
+.report-lightbox {
+  width: min(88vw, 720px);
+  max-height: 88vh;
+  padding: 0.85rem;
+  border-radius: 20px;
+}
+
+.report-lightbox img {
+  max-height: 72vh;
+  border-radius: 14px;
+}
+
+@media (max-width: 720px) {
+  .reports-page__hero .inventory-hero__stats {
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .reports-page__filters,
+  .reports-page__panel {
+    padding: 0.9rem;
+  }
+
+  .reports-page__exports {
+    width: 100%;
+  }
+
+  .reports-page__exports .secondary-button--small {
+    flex: 1 1 100%;
+  }
+}
