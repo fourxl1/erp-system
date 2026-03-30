@@ -9,13 +9,17 @@ function buildError(message, statusCode = 400) {
   return error;
 }
 
+function isLocationBoundUser(user) {
+  return (user.role_code === "ADMIN" || user.role_code === "STAFF") && user.location_id;
+}
+
 function assertAdminScope(user, locationId) {
   if (
-    user.role_code === "ADMIN" &&
+    (user.role_code === "ADMIN" || user.role_code === "STAFF") &&
     user.location_id &&
     Number(user.location_id) !== Number(locationId)
   ) {
-    throw buildError("Admins can only manage their assigned store", 403);
+    throw buildError("Users can only manage their assigned store", 403);
   }
 }
 
@@ -96,7 +100,7 @@ function assertUserLocationRequirement(roleName, locationId) {
 async function listLocations(user) {
   const locations = await systemModel.listLocations();
   const visibleLocations =
-    user.role_code === "ADMIN" && user.location_id
+    isLocationBoundUser(user)
       ? locations.filter((location) => Number(location.id) === Number(user.location_id))
       : locations;
 
@@ -158,7 +162,7 @@ async function listSections(locationId, user) {
     assertAdminScope(user, locationId);
   }
 
-  const scopedLocationId = user.role_code === "ADMIN" ? user.location_id : locationId;
+  const scopedLocationId = isLocationBoundUser(user) ? user.location_id : locationId;
   return systemModel.listSections(scopedLocationId);
 }
 
@@ -212,7 +216,7 @@ async function updateSection(id, payload, user) {
 }
 
 async function listAssets(locationId, user) {
-  const scopedLocationId = user.role_code === "ADMIN" ? user.location_id : locationId;
+  const scopedLocationId = isLocationBoundUser(user) ? user.location_id : locationId;
   if (scopedLocationId) {
     assertAdminScope(user, scopedLocationId);
   }
@@ -268,7 +272,7 @@ async function updateAsset(id, payload, user) {
 }
 
 async function createInventoryCount(payload, user) {
-  const locationId = payload.location_id || user.location_id;
+  const locationId = isLocationBoundUser(user) ? user.location_id : (payload.location_id || user.location_id);
   if (!locationId) {
     throw buildError("location_id is required for inventory counts");
   }
@@ -321,7 +325,7 @@ async function createInventoryCount(payload, user) {
 }
 
 async function listInventoryCounts(locationId, user) {
-  const scopedLocationId = user.role_code === "ADMIN" ? user.location_id : locationId;
+  const scopedLocationId = isLocationBoundUser(user) ? user.location_id : locationId;
   if (scopedLocationId) {
     assertAdminScope(user, scopedLocationId);
   }
@@ -389,7 +393,7 @@ async function postInventoryCount(countId, user) {
 }
 
 async function listAlerts(user, locationId) {
-  const scopedLocationId = user.role_code === "ADMIN" ? user.location_id : locationId;
+  const scopedLocationId = isLocationBoundUser(user) ? user.location_id : locationId;
   return systemModel.listAlerts(scopedLocationId);
 }
 

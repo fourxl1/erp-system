@@ -12,7 +12,7 @@ async function createRequestHeader(client, requestData) {
         status,
         notes
       )
-      VALUES ($1, $2, $3, $4, $5, 'PENDING', $6)
+      VALUES ($1::TEXT, $2::BIGINT, $3::BIGINT, $4::BIGINT, $5::BIGINT, 'PENDING', $6::TEXT)
       RETURNING *
     `,
     [
@@ -35,7 +35,7 @@ async function createRequestItems(client, requestId, items) {
     const result = await client.query(
       `
         INSERT INTO stock_request_items (request_id, item_id, quantity, unit_cost)
-        VALUES ($1, $2, $3, $4)
+        VALUES ($1::BIGINT, $2::BIGINT, $3::NUMERIC, $4::NUMERIC)
         RETURNING *
       `,
       [requestId, item.item_id, item.quantity, item.unit_cost || 0]
@@ -63,7 +63,7 @@ async function getRequestById(id) {
       JOIN locations requested_for_location ON requested_for_location.id = sr.location_id
       LEFT JOIN locations source_location ON source_location.id = sr.source_location_id
       LEFT JOIN locations legacy_destination_location ON legacy_destination_location.id = sr.destination_location_id
-      WHERE sr.id = $1
+      WHERE sr.id = $1::BIGINT
     `,
     [id]
   );
@@ -87,7 +87,7 @@ async function getRequestByIdWithClient(client, id) {
       JOIN locations requested_for_location ON requested_for_location.id = sr.location_id
       LEFT JOIN locations source_location ON source_location.id = sr.source_location_id
       LEFT JOIN locations legacy_destination_location ON legacy_destination_location.id = sr.destination_location_id
-      WHERE sr.id = $1
+      WHERE sr.id = $1::BIGINT
     `,
     [id]
   );
@@ -111,7 +111,7 @@ async function getRequestByIdForUpdate(client, id) {
       JOIN locations requested_for_location ON requested_for_location.id = sr.location_id
       LEFT JOIN locations source_location ON source_location.id = sr.source_location_id
       LEFT JOIN locations legacy_destination_location ON legacy_destination_location.id = sr.destination_location_id
-      WHERE sr.id = $1
+      WHERE sr.id = $1::BIGINT
       FOR UPDATE OF sr
     `,
     [id]
@@ -130,7 +130,7 @@ async function getRequestItems(requestId) {
         i.image_path AS item_image
       FROM stock_request_items sri
       JOIN items i ON i.id = sri.item_id
-      WHERE sri.request_id = $1
+      WHERE sri.request_id = $1::BIGINT
       ORDER BY i.name
     `,
     [requestId]
@@ -149,7 +149,7 @@ async function getRequestItemsWithClient(client, requestId) {
         i.image_path AS item_image
       FROM stock_request_items sri
       JOIN items i ON i.id = sri.item_id
-      WHERE sri.request_id = $1
+      WHERE sri.request_id = $1::BIGINT
       ORDER BY i.name
     `,
     [requestId]
@@ -164,33 +164,33 @@ async function listRequests(filters = {}) {
 
   if (filters.locationId) {
     values.push(filters.locationId);
-    conditions.push(`sr.location_id = $${values.length}`);
+    conditions.push(`sr.location_id = $${values.length}::BIGINT`);
   }
 
   if (filters.sourceLocationId) {
     values.push(filters.sourceLocationId);
-    conditions.push(`COALESCE(sr.source_location_id, sr.location_id) = $${values.length}`);
+    conditions.push(`COALESCE(sr.source_location_id, sr.location_id) = $${values.length}::BIGINT`);
   }
 
   if (filters.accessLocationId) {
     values.push(filters.accessLocationId);
     conditions.push(
       `(
-        sr.location_id = $${values.length}
-        OR COALESCE(sr.source_location_id, sr.location_id) = $${values.length}
-        OR sr.destination_location_id = $${values.length}
+        sr.location_id = $${values.length}::BIGINT
+        OR COALESCE(sr.source_location_id, sr.location_id) = $${values.length}::BIGINT
+        OR sr.destination_location_id = $${values.length}::BIGINT
       )`
     );
   }
 
   if (filters.requesterId) {
     values.push(filters.requesterId);
-    conditions.push(`sr.requester_id = $${values.length}`);
+    conditions.push(`sr.requester_id = $${values.length}::BIGINT`);
   }
 
   if (filters.status) {
     values.push(String(filters.status).toUpperCase());
-    conditions.push(`sr.status = $${values.length}`);
+    conditions.push(`sr.status = $${values.length}::TEXT`);
   }
 
   const result = await query(
@@ -241,7 +241,7 @@ async function updateRequestStatus(client, id, status, options = {}) {
     `
       UPDATE stock_requests
       SET ${assignments.join(", ")}
-      WHERE id = $2
+      WHERE id = $2::BIGINT
       RETURNING *
     `,
     values

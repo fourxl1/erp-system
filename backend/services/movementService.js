@@ -26,23 +26,31 @@ function buildError(message, statusCode = 400) {
   return error;
 }
 
+function isLocationBoundUser(user) {
+  return (user.role_code === "ADMIN" || user.role_code === "STAFF") && user.location_id;
+}
+
+function getScopedLocationId(user, requestedLocationId = null) {
+  if (isLocationBoundUser(user)) {
+    return Number(user.location_id);
+  }
+
+  return requestedLocationId ? Number(requestedLocationId) : requestedLocationId;
+}
+
 function assertStoreAccess(user, locationId) {
   if (
-    user.role_code === "STAFF" &&
+    isLocationBoundUser(user) &&
     user.location_id &&
     Number(user.location_id) !== Number(locationId)
   ) {
-    throw buildError("Staff can only manage inventory in their assigned store", 403);
+    throw buildError("Users can only manage inventory in their assigned store", 403);
   }
 }
 
 function assertRequestDestinationAccess(user, destinationLocationId) {
-  if (
-    user.role_code === "STAFF" &&
-    user.location_id &&
-    Number(user.location_id) !== Number(destinationLocationId)
-  ) {
-    throw buildError("Staff can only request stock for their assigned store", 403);
+  if (isLocationBoundUser(user) && Number(user.location_id) !== Number(destinationLocationId)) {
+    throw buildError("Users can only request stock for their assigned store", 403);
   }
 
   assertStoreAccess(user, destinationLocationId);
@@ -195,7 +203,10 @@ function serializeMovementRecord(record) {
       normalizedType === "ADJUSTMENT"
         ? resolveAdjustmentDirection(normalizedType, record.adjustment_direction, record.ledger_quantity)
         : null,
-    can_modify: !record.request_id && Number(record.maintenance_usage_count || 0) === 0
+    can_modify:
+      normalizedType !== "TRANSFER" &&
+      !record.request_id &&
+      Number(record.maintenance_usage_count || 0) === 0
   };
 }
 
@@ -364,8 +375,9 @@ async function transferStock(payload, user) {
     throw buildError("Transfer source and destination cannot be the same");
   }
 
-  assertStoreAccess(user, payload.source_location_id);
-  assertStoreAccess(user, payload.destination_location_id);
+  if (isLocationBoundUser(user)) {
+    assertStoreAccess(user, payload.source_location_id);
+  }
 
   const transferResult = await withTransaction((client) =>
     performTransferInTransaction(client, payload, user)
@@ -414,7 +426,7 @@ async function getDailyMovements(filters, user) {
     scopedFilters.movementType = normalizeIncomingMovementType(filters.movementType);
   }
 
-  if (user.role_code === "STAFF" && user.location_id) {
+  if (isLocationBoundUser(user)) {
     scopedFilters.locationId = user.location_id;
   }
 
@@ -433,7 +445,7 @@ async function getMovementHistory(filters, user) {
     scopedFilters.movementType = normalizeIncomingMovementType(filters.movementType);
   }
 
-  if (user.role_code === "STAFF" && user.location_id) {
+  if (isLocationBoundUser(user)) {
     scopedFilters.locationId = user.location_id;
   }
 
@@ -447,7 +459,10 @@ async function createRequest(payload, user) {
 
   await validateRequestItems(payload.items);
 
-  const destinationLocationId = payload.location_id || user.location_id;
+  const destinationLocationId =
+    user.role_code === "SUPERADMIN"
+      ? Number(payload.location_id || user.location_id || 0) || null
+      : getScopedLocationId(user, payload.location_id);
   const sourceLocationId = payload.source_location_id;
 
   if (!destinationLocationId) {
@@ -655,6 +670,8 @@ async function listRequests(filters, user) {
 
   if (user.role_code === "STAFF") {
     scopedFilters.requesterId = user.id;
+  } else if (user.role_code === "ADMIN" && user.location_id) {
+    scopedFilters.accessLocationId = user.location_id;
   }
 
   const requests = await requestModel.listRequests(scopedFilters);
@@ -743,7 +760,7 @@ async function logMaintenance(payload, user) {
 async function getMaintenanceHistory(filters, user) {
   const scopedFilters = { ...filters };
 
-  if (user.role_code === "STAFF" && user.location_id) {
+  if (isLocationBoundUser(user)) {
     scopedFilters.locationId = user.location_id;
   }
 
@@ -752,6 +769,10 @@ async function getMaintenanceHistory(filters, user) {
 
 function assertMovementModificationAccess(user, movement) {
   if (user.role_code === "STAFF") {
+    throw buildError("Staff cannot modify stock movements", 403);
+  }
+
+  if (user.role_code === "ADMIN") {
     assertStoreAccess(user, movement.location_id);
   }
 }
@@ -866,8 +887,8 @@ async function updateMovement(id, payload, user) {
       adjustment_direction: payload.adjustment_direction
     };
 
-    if (user.role_code === "STAFF") {
-      assertStoreAccess(user, nextPayload.location_id);
+    if (isLocationBoundUser(user)) {
+      nextPayload.location_id = Number(user.location_id);
     }
 
     const prepared = await prepareSingleMovement(client, nextPayload, user);

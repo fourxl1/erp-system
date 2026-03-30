@@ -30,6 +30,7 @@ function Messages() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeBox, setActiveBox] = useState("all");
+  const [clearedMessageIds, setClearedMessageIds] = useState([]);
 
   const loadData = useCallback(async () => {
     try {
@@ -61,24 +62,29 @@ function Messages() {
     };
   }, [loadData]);
 
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => !clearedMessageIds.includes(message.id)),
+    [clearedMessageIds, messages]
+  );
+
   const filteredMessages = useMemo(() => {
     if (activeBox === "received") {
-      return messages.filter((message) => message.message_box === "received");
+      return visibleMessages.filter((message) => message.message_box === "received");
     }
 
     if (activeBox === "sent") {
-      return messages.filter((message) => message.message_box === "sent");
+      return visibleMessages.filter((message) => message.message_box === "sent");
     }
 
-    return messages;
-  }, [activeBox, messages]);
+    return visibleMessages;
+  }, [activeBox, visibleMessages]);
 
   const unreadCount = useMemo(
     () =>
-      messages.filter(
+      visibleMessages.filter(
         (message) => message.message_box === "received" && !message.is_read
       ).length,
-    [messages]
+    [visibleMessages]
   );
 
   async function handleSubmit(event) {
@@ -124,15 +130,21 @@ function Messages() {
     }
   }
 
+  function handleClearVisibleMessages() {
+    setClearedMessageIds((current) => [
+      ...new Set([...current, ...filteredMessages.map((message) => message.id)])
+    ]);
+  }
+
   return (
     <DashboardLayout>
       <div className="inventory-shell space-y-6">
-        <section className="inventory-hero">
+        <section className="inventory-hero inventory-hero--compact">
           <div className="inventory-hero__content">
             <p className="inventory-hero__eyebrow">Messaging</p>
             <h2 className="inventory-hero__title">Internal Messages</h2>
             <p className="inventory-hero__copy">
-              Send store-to-store messages and review received updates in descending time order.
+              Send store-to-store messages and keep the active inbox clear.
             </p>
           </div>
           <div className="inventory-hero__stats">
@@ -141,8 +153,8 @@ function Messages() {
               <strong>{unreadCount}</strong>
             </article>
             <article>
-              <p>Total Messages</p>
-              <strong>{messages.length}</strong>
+              <p>Visible Messages</p>
+              <strong>{visibleMessages.length}</strong>
             </article>
           </div>
         </section>
@@ -204,7 +216,7 @@ function Messages() {
               </label>
             </div>
 
-            <label className="field" style={{ marginTop: "1rem" }}>
+            <label className="field inventory-card__body-block">
               <span>Message</span>
               <textarea
                 name="message"
@@ -220,7 +232,7 @@ function Messages() {
               />
             </label>
 
-            <div className="inventory-card__actions" style={{ marginTop: "1rem" }}>
+            <div className="inventory-card__actions">
               <button type="submit" className="primary-button" disabled={loading}>
                 {loading ? "Sending..." : "Send Message"}
               </button>
@@ -256,6 +268,14 @@ function Messages() {
               >
                 Sent
               </button>
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={handleClearVisibleMessages}
+                disabled={filteredMessages.length === 0}
+              >
+                Clear
+              </button>
             </div>
           </div>
 
@@ -271,7 +291,7 @@ function Messages() {
                   <button
                     key={message.id}
                     type="button"
-                    className="request-notice-card"
+                    className="request-notice-card request-notice-card--compact"
                     style={{
                       textAlign: "left",
                       borderColor: isUnread ? "rgba(220, 28, 35, 0.2)" : undefined,

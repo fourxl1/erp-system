@@ -7,15 +7,19 @@ function assertStoreScope(user, locationId) {
     return;
   }
 
-  if (user.role_code === "STAFF" && user.location_id && Number(user.location_id) !== Number(locationId)) {
-    const error = new Error("Staff can only access inventory in their assigned store");
+  if (
+    (user.role_code === "STAFF" || user.role_code === "ADMIN") &&
+    user.location_id &&
+    Number(user.location_id) !== Number(locationId)
+  ) {
+    const error = new Error("Users can only access inventory in their assigned store");
     error.statusCode = 403;
     throw error;
   }
 }
 
 function getScopedLocationId(user, requestedLocationId = null) {
-  if (user.role_code === "STAFF" && user.location_id) {
+  if ((user.role_code === "STAFF" || user.role_code === "ADMIN") && user.location_id) {
     return user.location_id;
   }
 
@@ -125,7 +129,7 @@ async function getCurrentStockByLocation(itemId, user) {
     throw error;
   }
 
-  if (user.role_code === "STAFF" && user.location_id) {
+  if ((user.role_code === "STAFF" || user.role_code === "ADMIN") && user.location_id) {
     return result.balances.filter((balance) => Number(balance.location_id) === Number(user.location_id));
   }
 
@@ -142,15 +146,15 @@ async function getAvailableInventory(filters, user) {
 
   if (filters.itemId) {
     values.push(filters.itemId);
-    conditions.push(`i.id = $${values.length}`);
+    conditions.push(`i.id = $${values.length}::BIGINT`);
   }
 
-  if (user.role_code === "STAFF" && user.location_id) {
+  if ((user.role_code === "STAFF" || user.role_code === "ADMIN") && user.location_id) {
     values.push(user.location_id);
-    conditions.push(`b.location_id = $${values.length}`);
+    conditions.push(`b.location_id = $${values.length}::BIGINT`);
   } else if (filters.locationId) {
     values.push(filters.locationId);
-    conditions.push(`b.location_id = $${values.length}`);
+    conditions.push(`b.location_id = $${values.length}::BIGINT`);
   }
 
   const result = await query(

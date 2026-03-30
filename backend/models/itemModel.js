@@ -6,17 +6,17 @@ function buildItemFilters(filters = {}) {
 
   if (filters.itemId) {
     values.push(filters.itemId);
-    conditions.push(`i.id = $${values.length}`);
+    conditions.push(`i.id = $${values.length}::BIGINT`);
   }
 
   if (filters.categoryId) {
     values.push(filters.categoryId);
-    conditions.push(`i.category_id = $${values.length}`);
+    conditions.push(`i.category_id = $${values.length}::BIGINT`);
   }
 
   if (filters.search) {
     values.push(`%${filters.search}%`);
-    conditions.push(`i.name ILIKE $${values.length}`);
+    conditions.push(`i.name ILIKE $${values.length}::TEXT`);
   }
 
   return {
@@ -31,7 +31,7 @@ async function createItem(item) {
       INSERT INTO items
         (category_id, supplier_id, name, description, unit, reorder_level, image_path)
       VALUES
-        ($1, $2, $3, $4, $5, $6, $7)
+        ($1::BIGINT, $2::BIGINT, $3::TEXT, $4::TEXT, $5::TEXT, $6::NUMERIC, $7::TEXT)
       RETURNING *
     `,
     [
@@ -53,15 +53,15 @@ async function updateItem(id, item) {
     `
       UPDATE items
       SET
-        category_id = $1,
-        supplier_id = $2,
-        name = $3,
-        description = $4,
-        unit = $5,
-        reorder_level = $6,
-        image_path = COALESCE($7, image_path),
+        category_id = $1::BIGINT,
+        supplier_id = $2::BIGINT,
+        name = $3::TEXT,
+        description = $4::TEXT,
+        unit = $5::TEXT,
+        reorder_level = $6::NUMERIC,
+        image_path = COALESCE($7::TEXT, image_path),
         updated_at = NOW()
-      WHERE id = $8
+      WHERE id = $8::BIGINT
       RETURNING *
     `,
     [
@@ -84,7 +84,7 @@ async function deleteItemById(id) {
     `
       UPDATE items
       SET is_active = FALSE, updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1::BIGINT
       RETURNING *
     `,
     [id]
@@ -100,8 +100,8 @@ async function getItemById(id, locationId = null) {
 
   if (locationId) {
     values.push(locationId);
-    movementJoin = `JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.length}`;
-    balanceLocationClause = ` AND b.location_id = $${values.length}`;
+    movementJoin = `JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.length}::BIGINT`;
+    balanceLocationClause = ` AND b.location_id = $${values.length}::BIGINT`;
   }
 
   const itemResult = await query(
@@ -124,7 +124,7 @@ async function getItemById(id, locationId = null) {
       LEFT JOIN categories c ON c.id = i.category_id
       LEFT JOIN suppliers s ON s.id = i.supplier_id
       ${movementJoin}
-      WHERE i.id = $1 AND i.is_active = TRUE
+      WHERE i.id = $1::BIGINT AND i.is_active = TRUE
       GROUP BY i.id, c.id, c.name, s.id, s.name
     `,
     values
@@ -143,7 +143,7 @@ async function getItemById(id, locationId = null) {
         b.updated_at
       FROM inventory_balance b
       JOIN locations l ON l.id = b.location_id
-      WHERE b.item_id = $1${balanceLocationClause}
+      WHERE b.item_id = $1::BIGINT${balanceLocationClause}
       ORDER BY l.name
     `,
     values
@@ -159,7 +159,7 @@ async function getAllItems(filters = {}) {
   const { whereClause, values } = buildItemFilters(filters);
   const locationJoin =
     filters.locationId
-      ? `JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.push(filters.locationId)}`
+      ? `JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.push(filters.locationId)}::BIGINT`
       : "LEFT JOIN inventory_balance b ON b.item_id = i.id";
 
   const result = await query(
@@ -194,7 +194,7 @@ async function getInventoryStats(locationId = null) {
   const values = [];
   const locationJoin =
     locationId
-      ? `LEFT JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.push(locationId)}`
+      ? `LEFT JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.push(locationId)}::BIGINT`
       : "LEFT JOIN inventory_balance b ON b.item_id = i.id";
 
   const result = await query(
@@ -215,7 +215,7 @@ async function getInventoryStats(locationId = null) {
           END AS avg_cost
         FROM inventory_ledger il
         WHERE il.item_id = i.id
-          ${locationId ? "AND il.location_id = $1" : ""}
+          ${locationId ? "AND il.location_id = $1::BIGINT" : ""}
       ) latest ON TRUE
       WHERE i.is_active = TRUE
     `,
@@ -235,7 +235,7 @@ async function getItemCategoryById(id) {
       FROM items i
       LEFT JOIN categories c ON c.id = i.category_id
       LEFT JOIN suppliers s ON s.id = i.supplier_id
-      WHERE i.id = $1 AND i.is_active = TRUE
+      WHERE i.id = $1::BIGINT AND i.is_active = TRUE
     `,
     [id]
   );

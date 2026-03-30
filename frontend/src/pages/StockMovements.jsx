@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
 import ItemIdentity from "../components/ItemIdentity";
 import {
@@ -17,22 +17,17 @@ import {
 } from "../services/api";
 import { formatMovementType, MOVEMENT_TYPE_OPTIONS } from "../utils/movementTypes";
 
-const emptyMovementForm = {
-  item_id: "",
-  movement_type: "STOCK_IN",
-  location_id: "",
-  source_location_id: "",
-  destination_location_id: "",
-  section_id: "",
-  asset_id: "",
-  recipient_id: "",
-  supplier_id: "",
-  adjustment_direction: "INCREASE",
-  quantity: "",
-  unit_cost: "",
-  reference: "",
-  created_at: ""
-};
+function readStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem("inventory-user-data") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function normalizeRoleName(roleName) {
+  return String(roleName || "").trim().toLowerCase();
+}
 
 function toDateTimeInputValue(value) {
   if (!value) {
@@ -49,7 +44,34 @@ function toDateTimeInputValue(value) {
   return localTime.toISOString().slice(0, 16);
 }
 
+function createEmptyMovementForm(fixedLocationId = "") {
+  return {
+    item_id: "",
+    movement_type: "STOCK_IN",
+    location_id: fixedLocationId,
+    source_location_id: fixedLocationId,
+    destination_location_id: "",
+    section_id: "",
+    asset_id: "",
+    recipient_id: "",
+    supplier_id: "",
+    adjustment_direction: "INCREASE",
+    quantity: "",
+    unit_cost: "",
+    reference: "",
+    created_at: ""
+  };
+}
+
 function StockMovements() {
+  const currentUser = readStoredUser();
+  const currentRole = normalizeRoleName(currentUser.role_name);
+  const fixedLocationId =
+    currentRole === "superadmin" ? "" : String(currentUser.location_id || "");
+  const isLocationBound = Boolean(fixedLocationId);
+  const canEditMovements = currentRole === "admin" || currentRole === "superadmin";
+  const canPostCounts = currentRole === "admin" || currentRole === "superadmin";
+
   const [items, setItems] = useState([]);
   const [movements, setMovements] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -61,19 +83,34 @@ function StockMovements() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [editingMovementId, setEditingMovementId] = useState(null);
-  const [formData, setFormData] = useState(emptyMovementForm);
+  const [formData, setFormData] = useState(() => createEmptyMovementForm(fixedLocationId));
   const [countData, setCountData] = useState({
-    location_id: "",
+    location_id: fixedLocationId,
     item_id: "",
     counted_quantity: ""
   });
 
-  async function loadReferences() {
+  const itemScopeLocationId = useMemo(() => {
+    if (formData.movement_type === "TRANSFER") {
+      return formData.source_location_id || fixedLocationId;
+    }
+
+    return formData.location_id || fixedLocationId;
+  }, [fixedLocationId, formData.location_id, formData.movement_type, formData.source_location_id]);
+
+  const selectedLocationName = useMemo(
+    () => locations.find((location) => String(location.id) === String(fixedLocationId))?.name || "Assigned Store",
+    [fixedLocationId, locations]
+  );
+
+  const loadReferences = useCallback(async (activeLocationId = "") => {
     try {
+      const itemParams = activeLocationId ? { location_id: activeLocationId } : {};
+      const assetLocationId = activeLocationId || fixedLocationId;
       const [itemData, locationData, assetData, recipientData, supplierData] = await Promise.all([
-        fetchItems(),
+        fetchItems(itemParams),
         fetchLocations(),
-        fetchAssets(),
+        fetchAssets(assetLocationId ? Number(assetLocationId) : undefined),
         fetchRecipients(),
         fetchSuppliers()
       ]);
@@ -88,7 +125,7 @@ function StockMovements() {
       console.error("Failed to load movement references", loadError);
       setError(loadError.message || "Failed to load movement references");
     }
-  }
+  }, [fixedLocationId]);
 
   const loadDailyMovements = useCallback(async (selectedDate = "") => {
     try {
@@ -102,41 +139,97 @@ function StockMovements() {
   }, []);
 
   useEffect(() => {
-    void loadReferences();
-    void loadDailyMovements();
-  }, [loadDailyMovements]);
+    void loadReferences(itemScopeLocationId);
+  }, [itemScopeLocationId, loadReferences]);
 
   useEffect(() => {
     void loadDailyMovements(dailyDate);
   }, [dailyDate, loadDailyMovements]);
 
   useEffect(() => {
-    if (!formData.location_id) {
+    if (!editingMovementId) {
+      setFormData((current) => ({
+        ...current,
+        location_id: fixedLocationId || current.location_id,
+        source_location_id: fixedLocationId || current.source_location_id
+      }));
+      setCountData((current) => ({
+        ...current,
+        location_id: fixedLocationId || current.location_id
+      }));
+    }
+  }, [editingMovementId, fixedLocationId]);
+
+  useEffect(() => {
+    const sectionLocationId =
+      formData.movement_type === "TRANSFER"
+        ? formData.source_location_id || fixedLocationId
+        : formData.location_id || fixedLocationId;
+
+    if (!sectionLocationId) {
       setSections([]);
       return;
     }
 
-    fetchSections(formData.location_id)
+    fetchSections(Number(sectionLocationId))
       .then((data) => setSections(Array.isArray(data) ? data : []))
       .catch((loadError) => {
         console.error(loadError);
         setSections([]);
       });
-  }, [formData.location_id]);
+  }, [fixedLocationId, formData.location_id, formData.movement_type, formData.source_location_id]);
 
   function handleChange(event) {
     const { name, value } = event.target;
-    setFormData({ ...formData, [name]: value });
+
+    setFormData((current) => {
+      const next = { ...current, [name]: value };
+
+      if (name === "movement_type") {
+        if (value === "TRANSFER") {
+          next.source_location_id = fixedLocationId || current.location_id || "";
+          next.location_id = fixedLocationId || current.location_id || "";
+          next.section_id = "";
+          next.asset_id = "";
+          next.recipient_id = "";
+          next.supplier_id = "";
+        } else {
+          next.location_id = fixedLocationId || current.location_id || "";
+          next.source_location_id = fixedLocationId || current.source_location_id || "";
+          next.destination_location_id = "";
+        }
+      }
+
+      if (name === "location_id") {
+        next.section_id = "";
+        next.asset_id = "";
+      }
+
+      if (name === "source_location_id") {
+        next.section_id = "";
+        next.asset_id = "";
+        if (value === current.destination_location_id) {
+          next.destination_location_id = "";
+        }
+      }
+
+      return next;
+    });
   }
 
   function resetMovementForm() {
     setEditingMovementId(null);
-    setFormData(emptyMovementForm);
+    setFormData(createEmptyMovementForm(fixedLocationId));
   }
 
   async function handleSubmit() {
     if (!formData.item_id || !formData.quantity) {
       setError("Item and quantity are required");
+      return;
+    }
+
+    if (!itemScopeLocationId) {
+      setError("Location is required for this movement");
       return;
     }
 
@@ -150,11 +243,21 @@ function StockMovements() {
 
     try {
       setLoading(true);
+
       const payload = {
         ...formData,
-        location_id: formData.location_id ? Number(formData.location_id) : undefined,
-        source_location_id: formData.source_location_id ? Number(formData.source_location_id) : undefined,
-        destination_location_id: formData.destination_location_id ? Number(formData.destination_location_id) : undefined,
+        location_id:
+          formData.movement_type === "TRANSFER"
+            ? undefined
+            : (isLocationBound ? Number(fixedLocationId) : Number(formData.location_id)),
+        source_location_id:
+          formData.movement_type === "TRANSFER"
+            ? Number(formData.source_location_id || fixedLocationId)
+            : undefined,
+        destination_location_id:
+          formData.movement_type === "TRANSFER" && formData.destination_location_id
+            ? Number(formData.destination_location_id)
+            : undefined,
         section_id: formData.section_id ? Number(formData.section_id) : undefined,
         asset_id: formData.asset_id ? Number(formData.asset_id) : undefined,
         recipient_id: formData.recipient_id ? Number(formData.recipient_id) : undefined,
@@ -171,8 +274,7 @@ function StockMovements() {
 
       resetMovementForm();
       setError("");
-      await loadReferences();
-      await loadDailyMovements();
+      await loadDailyMovements(dailyDate);
     } catch (actionError) {
       console.error(actionError);
       setError(actionError.message || "Failed to record stock movement");
@@ -182,12 +284,16 @@ function StockMovements() {
   }
 
   function handleEditMovement(movement) {
+    if (!canEditMovements || !movement.can_modify) {
+      return;
+    }
+
     setEditingMovementId(movement.id);
     setFormData({
       item_id: String(movement.item_id || ""),
       movement_type: movement.movement_type || "STOCK_IN",
-      location_id: String(movement.location_id || ""),
-      source_location_id: String(movement.source_location_id || ""),
+      location_id: isLocationBound ? fixedLocationId : String(movement.location_id || ""),
+      source_location_id: isLocationBound ? fixedLocationId : String(movement.source_location_id || ""),
       destination_location_id: String(movement.destination_location_id || ""),
       section_id: String(movement.section_id || ""),
       asset_id: String(movement.asset_id || ""),
@@ -195,7 +301,8 @@ function StockMovements() {
       supplier_id: String(movement.supplier_id || ""),
       adjustment_direction: movement.adjustment_direction || "INCREASE",
       quantity: String(movement.quantity || ""),
-      unit_cost: movement.unit_cost === null || movement.unit_cost === undefined ? "" : String(movement.unit_cost),
+      unit_cost:
+        movement.unit_cost === null || movement.unit_cost === undefined ? "" : String(movement.unit_cost),
       reference: movement.reference || "",
       created_at: toDateTimeInputValue(movement.timestamp || movement.created_at)
     });
@@ -211,7 +318,6 @@ function StockMovements() {
       setLoading(true);
       await deleteStockMovement(id);
       setError("");
-      await loadReferences();
       await loadDailyMovements(dailyDate);
     } catch (actionError) {
       console.error(actionError);
@@ -241,13 +347,12 @@ function StockMovements() {
 
       await postInventoryCount(count.count.id);
       setCountData({
-        location_id: "",
+        location_id: fixedLocationId,
         item_id: "",
         counted_quantity: ""
       });
       setError("");
-      await loadReferences();
-      await loadDailyMovements();
+      await loadDailyMovements(dailyDate);
     } catch (actionError) {
       console.error(actionError);
       setError(actionError.message || "Failed to post inventory count");
@@ -258,245 +363,339 @@ function StockMovements() {
 
   return (
     <DashboardLayout>
-      <div className="module-placeholder">
-        <span className="module-placeholder__eyebrow">Movements</span>
-        <h2>{editingMovementId ? "Edit Stock Movement" : "Record Stock Movement"}</h2>
-        <p>Post receipts, issues, transfers, and adjustments into the live inventory ledger.</p>
-      </div>
+      <div className="inventory-shell space-y-6">
+        <section className="inventory-hero inventory-hero--compact">
+          <div className="inventory-hero__content">
+            <p className="inventory-hero__eyebrow">Movements</p>
+            <h2 className="inventory-hero__title">
+              {editingMovementId ? "Edit Stock Movement" : "Record Stock Movement"}
+            </h2>
+            <p className="inventory-hero__copy">
+              Create stock movements with location-aware item selection and live ledger updates.
+            </p>
+          </div>
+          <div className="inventory-hero__stats">
+            <article>
+              <p>Visible Items</p>
+              <strong>{items.length}</strong>
+            </article>
+            <article>
+              <p>Today&apos;s Records</p>
+              <strong>{movements.length}</strong>
+            </article>
+          </div>
+        </section>
 
-      {error ? <p className="form-error">{error}</p> : null}
-
-      <div className="module-placeholder" style={{ marginTop: "1rem" }}>
-        <div className="admin-grid admin-grid--movements">
-          <select name="item_id" value={formData.item_id} onChange={handleChange}>
-            <option value="">Select Item</option>
-            {items.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-
-          <select name="movement_type" value={formData.movement_type} onChange={handleChange}>
-            {MOVEMENT_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-
-          {formData.movement_type === "ADJUSTMENT" ? (
-            <select name="adjustment_direction" value={formData.adjustment_direction} onChange={handleChange}>
-              <option value="INCREASE">Increase Stock (+)</option>
-              <option value="DECREASE">Decrease Stock (-)</option>
-            </select>
-          ) : null}
-
-          <select name="location_id" value={formData.location_id} onChange={handleChange}>
-            <option value="">Primary Location</option>
-            {locations.map((location) => (
-              <option key={location.id} value={location.id}>
-                {location.name}
-              </option>
-            ))}
-          </select>
-
-          {formData.movement_type === "TRANSFER" ? (
-            <>
-              <select
-                name="source_location_id"
-                value={formData.source_location_id}
-                onChange={handleChange}
-              >
-                <option value="">Source Location</option>
-                {locations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                name="destination_location_id"
-                value={formData.destination_location_id}
-                onChange={handleChange}
-              >
-                <option value="">Destination Location</option>
-                {locations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : null}
-
-          <select name="section_id" value={formData.section_id} onChange={handleChange}>
-            <option value="">Section</option>
-            {sections.map((section) => (
-              <option key={section.id} value={section.id}>
-                {section.name}
-              </option>
-            ))}
-          </select>
-
-          <select name="asset_id" value={formData.asset_id} onChange={handleChange}>
-            <option value="">Asset</option>
-            {assets.map((asset) => (
-              <option key={asset.id} value={asset.id}>
-                {asset.name}
-              </option>
-            ))}
-          </select>
-
-          {formData.movement_type === "STOCK_IN" ? (
-            <select name="supplier_id" value={formData.supplier_id} onChange={handleChange}>
-              <option value="">Supplier</option>
-              {suppliers.map((supplier) => (
-                <option key={supplier.id} value={supplier.id}>
-                  {supplier.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
-
-          {formData.movement_type === "STOCK_OUT" || formData.movement_type === "ASSET_ISSUE" ? (
-            <select name="recipient_id" value={formData.recipient_id} onChange={handleChange}>
-              <option value="">Recipient</option>
-              {recipients.map((recipient) => (
-                <option key={recipient.id} value={recipient.id}>
-                  {recipient.full_name}
-                </option>
-              ))}
-            </select>
-          ) : null}
-
-          <input type="number" name="quantity" placeholder="Quantity" value={formData.quantity} onChange={handleChange} />
-          <input type="number" name="unit_cost" placeholder="Unit Cost" value={formData.unit_cost} onChange={handleChange} />
-          <input type="datetime-local" name="created_at" value={formData.created_at} onChange={handleChange} />
-          <input type="text" name="reference" placeholder="Reference / Notes" value={formData.reference} onChange={handleChange} />
-
-          <button type="button" className="primary-button" onClick={handleSubmit} disabled={loading}>
-            {loading ? "Saving..." : editingMovementId ? "Update Movement" : "Record Movement"}
-          </button>
-
-          {editingMovementId ? (
-            <button type="button" className="secondary-button" onClick={resetMovementForm} disabled={loading}>
-              Cancel Edit
+        {error ? (
+          <div className="dashboard-card__alert dashboard-card__alert--error">
+            <span>{error}</span>
+            <button type="button" className="alert-close" onClick={() => setError("")}>
+              x
             </button>
-          ) : null}
-        </div>
-      </div>
+          </div>
+        ) : null}
 
-      <div className="module-placeholder" style={{ marginTop: "1rem" }}>
-        <h3>Quick Physical Count</h3>
-        <div className="admin-grid admin-grid--counts">
-          <select value={countData.location_id} onChange={(event) => setCountData({ ...countData, location_id: event.target.value })}>
-            <option value="">Location</option>
-            {locations.map((location) => (
-              <option key={location.id} value={location.id}>
-                {location.name}
-              </option>
-            ))}
-          </select>
+        <section className="inventory-card">
+          <div className="inventory-card__header">
+            <div>
+              <p className="dashboard-card__eyebrow">Movement Entry</p>
+              <h3>{editingMovementId ? "Update Movement" : "Create Movement"}</h3>
+            </div>
+            {isLocationBound ? (
+              <span className="badge-chip">Location Locked: {selectedLocationName}</span>
+            ) : null}
+          </div>
 
-          <select value={countData.item_id} onChange={(event) => setCountData({ ...countData, item_id: event.target.value })}>
-            <option value="">Item</option>
-            {items.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
+          <div className="admin-grid admin-grid--movements">
+            <select name="item_id" value={formData.item_id} onChange={handleChange}>
+              <option value="">Select Item</option>
+              {items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
 
-          <input
-            type="number"
-            placeholder="Counted Quantity"
-            value={countData.counted_quantity}
-            onChange={(event) => setCountData({ ...countData, counted_quantity: event.target.value })}
-          />
+            <select name="movement_type" value={formData.movement_type} onChange={handleChange}>
+              {MOVEMENT_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
 
-          <button type="button" className="secondary-button" onClick={handleCountSubmit} disabled={loading}>
-            Post Count
-          </button>
-        </div>
-      </div>
+            {formData.movement_type === "ADJUSTMENT" ? (
+              <select name="adjustment_direction" value={formData.adjustment_direction} onChange={handleChange}>
+                <option value="INCREASE">Increase Stock (+)</option>
+                <option value="DECREASE">Decrease Stock (-)</option>
+              </select>
+            ) : null}
 
-      <div className="module-placeholder" style={{ marginTop: "1rem" }}>
-        <div className="table-toolbar">
-          <h3>Daily Movements</h3>
-          <input type="date" value={dailyDate} onChange={(event) => setDailyDate(event.target.value)} />
-        </div>
+            {!isLocationBound && formData.movement_type !== "TRANSFER" ? (
+              <select name="location_id" value={formData.location_id} onChange={handleChange}>
+                <option value="">Primary Location</option>
+                {locations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
 
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th>Type</th>
-                <th>Qty</th>
-                <th>Location</th>
-                <th>Section</th>
-                <th>Supplier / Recipient</th>
-                <th>Reference</th>
-                <th>Entered By</th>
-                <th>Time</th>
-                <th className="text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {movements.length === 0 ? (
-                <tr>
-                  <td colSpan="10" className="data-table__empty">No movements found for the selected day.</td>
-                </tr>
+            {formData.movement_type === "TRANSFER" ? (
+              <>
+                {!isLocationBound ? (
+                  <select
+                    name="source_location_id"
+                    value={formData.source_location_id}
+                    onChange={handleChange}
+                  >
+                    <option value="">Source Location</option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="inventory-inline-chip">Source: {selectedLocationName}</div>
+                )}
+
+                <select
+                  name="destination_location_id"
+                  value={formData.destination_location_id}
+                  onChange={handleChange}
+                >
+                  <option value="">Destination Location</option>
+                  {locations
+                    .filter((location) => String(location.id) !== String(formData.source_location_id || fixedLocationId))
+                    .map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                </select>
+              </>
+            ) : null}
+
+            <select name="section_id" value={formData.section_id} onChange={handleChange}>
+              <option value="">Section</option>
+              {sections.map((section) => (
+                <option key={section.id} value={section.id}>
+                  {section.name}
+                </option>
+              ))}
+            </select>
+
+            <select name="asset_id" value={formData.asset_id} onChange={handleChange}>
+              <option value="">Asset</option>
+              {assets.map((asset) => (
+                <option key={asset.id} value={asset.id}>
+                  {asset.name}
+                </option>
+              ))}
+            </select>
+
+            {formData.movement_type === "STOCK_IN" ? (
+              <select name="supplier_id" value={formData.supplier_id} onChange={handleChange}>
+                <option value="">Supplier</option>
+                {suppliers.map((supplier) => (
+                  <option key={supplier.id} value={supplier.id}>
+                    {supplier.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+
+            {formData.movement_type === "STOCK_OUT" || formData.movement_type === "ASSET_ISSUE" ? (
+              <select name="recipient_id" value={formData.recipient_id} onChange={handleChange}>
+                <option value="">Recipient</option>
+                {recipients.map((recipient) => (
+                  <option key={recipient.id} value={recipient.id}>
+                    {recipient.full_name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+
+            <input
+              type="number"
+              name="quantity"
+              placeholder="Quantity"
+              value={formData.quantity}
+              onChange={handleChange}
+            />
+            <input
+              type="number"
+              name="unit_cost"
+              placeholder="Unit Cost"
+              value={formData.unit_cost}
+              onChange={handleChange}
+            />
+            <input
+              type="datetime-local"
+              name="created_at"
+              value={formData.created_at}
+              onChange={handleChange}
+            />
+            <input
+              type="text"
+              name="reference"
+              placeholder="Reference / Notes"
+              value={formData.reference}
+              onChange={handleChange}
+            />
+          </div>
+
+          <div className="inventory-card__actions">
+            <button type="button" className="primary-button" onClick={handleSubmit} disabled={loading}>
+              {loading ? "Saving..." : editingMovementId ? "Update Movement" : "Record Movement"}
+            </button>
+
+            {editingMovementId ? (
+              <button type="button" className="secondary-button" onClick={resetMovementForm} disabled={loading}>
+                Cancel Edit
+              </button>
+            ) : null}
+          </div>
+        </section>
+
+        {canPostCounts ? (
+          <section className="inventory-card">
+            <div className="inventory-card__header">
+              <div>
+                <p className="dashboard-card__eyebrow">Inventory Count</p>
+                <h3>Quick Physical Count</h3>
+              </div>
+            </div>
+            <div className="admin-grid admin-grid--counts">
+              {!isLocationBound ? (
+                <select
+                  value={countData.location_id}
+                  onChange={(event) =>
+                    setCountData((current) => ({ ...current, location_id: event.target.value }))
+                  }
+                >
+                  <option value="">Location</option>
+                  {locations.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
               ) : (
-                movements.map((movement, index) => (
-                  <tr key={`${movement.reference || movement.item_name}-${index}`}>
-                    <td>
-                      <ItemIdentity
-                        name={movement.item_name}
-                        imagePath={movement.item_image}
-                        compact
-                      />
-                    </td>
-                    <td>{formatMovementType(movement.movement_type)}</td>
-                    <td>{movement.quantity}</td>
-                    <td>{movement.location}</td>
-                    <td>{movement.section || "-"}</td>
-                    <td>{movement.supplier || movement.recipient || "-"}</td>
-                    <td>{movement.reference || "-"}</td>
-                    <td>{movement.entered_by}</td>
-                    <td>{new Date(movement.timestamp).toLocaleString()}</td>
-                    <td className="text-right">
-                      {movement.can_modify ? (
-                        <div className="action-row" style={{ justifyContent: "flex-end" }}>
-                          <button
-                            type="button"
-                            className="action-btn action-btn--edit"
-                            onClick={() => handleEditMovement(movement)}
-                            disabled={loading}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="action-btn action-btn--delete"
-                            onClick={() => handleDeleteMovement(movement.id)}
-                            disabled={loading}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="status-chip status-chip--pending">Locked</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                <div className="inventory-inline-chip">Counting: {selectedLocationName}</div>
               )}
-            </tbody>
-          </table>
-        </div>
+
+              <select
+                value={countData.item_id}
+                onChange={(event) =>
+                  setCountData((current) => ({ ...current, item_id: event.target.value }))
+                }
+              >
+                <option value="">Item</option>
+                {items.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                type="number"
+                placeholder="Counted Quantity"
+                value={countData.counted_quantity}
+                onChange={(event) =>
+                  setCountData((current) => ({ ...current, counted_quantity: event.target.value }))
+                }
+              />
+
+              <button type="button" className="secondary-button" onClick={handleCountSubmit} disabled={loading}>
+                Post Count
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="inventory-panel">
+          <div className="inventory-panel__header">
+            <div>
+              <p className="dashboard-card__eyebrow">Daily Ledger</p>
+              <h3>Daily Movements</h3>
+            </div>
+            <input type="date" value={dailyDate} onChange={(event) => setDailyDate(event.target.value)} />
+          </div>
+
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Type</th>
+                  <th>Qty</th>
+                  <th>Location</th>
+                  <th>Section</th>
+                  <th>Supplier / Recipient</th>
+                  <th>Reference</th>
+                  <th>Entered By</th>
+                  <th>Time</th>
+                  <th className="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movements.length === 0 ? (
+                  <tr>
+                    <td colSpan="10" className="data-table__empty">No movements found for the selected day.</td>
+                  </tr>
+                ) : (
+                  movements.map((movement, index) => (
+                    <tr key={`${movement.id}-${movement.reference || movement.item_name}-${index}`}>
+                      <td>
+                        <ItemIdentity
+                          name={movement.item_name}
+                          imagePath={movement.item_image}
+                          compact
+                        />
+                      </td>
+                      <td>{formatMovementType(movement.movement_type)}</td>
+                      <td>{movement.quantity}</td>
+                      <td>{movement.location}</td>
+                      <td>{movement.section || "-"}</td>
+                      <td>{movement.supplier || movement.recipient || "-"}</td>
+                      <td>{movement.reference || "-"}</td>
+                      <td>{movement.entered_by}</td>
+                      <td>{new Date(movement.timestamp).toLocaleString()}</td>
+                      <td className="text-right">
+                        {canEditMovements && movement.can_modify ? (
+                          <div className="action-row" style={{ justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              className="action-btn action-btn--edit"
+                              onClick={() => handleEditMovement(movement)}
+                              disabled={loading}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="action-btn action-btn--delete"
+                              onClick={() => handleDeleteMovement(movement.id)}
+                              disabled={loading}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="status-chip status-chip--pending">Locked</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </DashboardLayout>
   );

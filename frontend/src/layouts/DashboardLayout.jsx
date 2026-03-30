@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import BrandMark from "../components/BrandMark";
-import { createIssue, fetchRequests } from "../services/api";
+import { createIssue, fetchAlerts, fetchRequests, markAlertAsRead } from "../services/api";
 import { disconnectSocket, getSocket } from "../services/socket";
 import {
   buildRequestNotifications,
+  dismissRequestNotificationKeys,
   getDismissedRequestNotificationKeys,
   REQUEST_NOTIFICATION_STATE_EVENT,
   REQUEST_REFRESH_EVENT
@@ -32,7 +33,7 @@ const navItems = [
     label: "Reports",
     description: "Operational and financial reporting",
     icon: "RP",
-    allowedRoles: ["admin", "superadmin"]
+    allowedRoles: ["staff", "admin", "superadmin"]
   }
 ];
 
@@ -48,11 +49,13 @@ function DashboardLayout({ children }) {
   const [issueSubmitting, setIssueSubmitting] = useState(false);
   const [issueFeedback, setIssueFeedback] = useState({ type: "", message: "" });
   const [requests, setRequests] = useState([]);
+  const [alerts, setAlerts] = useState([]);
   const [dismissedKeys, setDismissedKeys] = useState(() =>
     getDismissedRequestNotificationKeys(currentUser.id)
   );
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
+  const [showNotificationCenter, setShowNotificationCenter] = useState(false);
 
   async function handleSendIssue() {
     if (!issueTitle.trim()) {
@@ -97,30 +100,31 @@ function DashboardLayout({ children }) {
   useEffect(() => {
     let active = true;
 
-    async function loadRequests() {
+    async function loadNotifications() {
       try {
-        const requestData = await fetchRequests();
+        const [requestData, alertData] = await Promise.all([fetchRequests(), fetchAlerts()]);
 
         if (!active) {
           return;
         }
 
         setRequests(requestData.requests || []);
+        setAlerts(Array.isArray(alertData) ? alertData : []);
       } catch (error) {
-        console.error("Failed to load request badge count", error);
+        console.error("Failed to load notification center", error);
       }
     }
 
     function handleRequestRefresh() {
-      void loadRequests();
+      void loadNotifications();
     }
 
     function handleNotificationStateRefresh() {
       setDismissedKeys(getDismissedRequestNotificationKeys(currentUser.id));
     }
 
-    void loadRequests();
-    const intervalId = window.setInterval(loadRequests, 30000);
+    void loadNotifications();
+    const intervalId = window.setInterval(loadNotifications, 30000);
 
     window.addEventListener(REQUEST_REFRESH_EVENT, handleRequestRefresh);
     window.addEventListener(REQUEST_NOTIFICATION_STATE_EVENT, handleNotificationStateRefresh);
@@ -156,10 +160,35 @@ function DashboardLayout({ children }) {
     };
   }, []);
 
-  const requestBadgeCount = useMemo(
-    () => buildRequestNotifications(requests, currentUser.id, dismissedKeys).length,
+  useEffect(() => {
+    setShowNotificationCenter(false);
+    setIsSidebarOpen(false);
+  }, [location.pathname]);
+
+  const requestNotifications = useMemo(
+    () => buildRequestNotifications(requests, currentUser.id, dismissedKeys),
     [currentUser.id, dismissedKeys, requests]
   );
+
+  const unreadAlerts = useMemo(
+    () => alerts.filter((alert) => !alert.is_read),
+    [alerts]
+  );
+
+  useEffect(() => {
+    if (location.pathname !== "/requests" || requestNotifications.length === 0) {
+      return;
+    }
+
+    const nextDismissed = dismissRequestNotificationKeys(
+      currentUser.id,
+      requestNotifications.map((notification) => notification.key)
+    );
+    setDismissedKeys(nextDismissed);
+    window.dispatchEvent(new Event(REQUEST_NOTIFICATION_STATE_EVENT));
+  }, [currentUser.id, location.pathname, requestNotifications]);
+
+  const notificationCount = requestNotifications.length + unreadAlerts.length;
 
   const visibleNavItems = useMemo(
     () => navItems.filter((item) => hasAllowedRole(currentUser, item.allowedRoles)),
@@ -170,6 +199,43 @@ function DashboardLayout({ children }) {
     () => visibleNavItems.find((item) => item.path === location.pathname) || visibleNavItems[0] || navItems[0],
     [location.pathname, visibleNavItems]
   );
+
+  async function handleResolveAlert(alertId) {
+    try {
+      await markAlertAsRead(alertId);
+      setAlerts((current) =>
+        current.map((alert) =>
+          alert.id === alertId ? { ...alert, is_read: true } : alert
+        )
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async function handleClearAlerts() {
+    const unreadAlertIds = unreadAlerts.map((alert) => alert.id);
+
+    try {
+      await Promise.all(unreadAlertIds.map((alertId) => markAlertAsRead(alertId)));
+      setAlerts((current) =>
+        current.map((alert) =>
+          unreadAlertIds.includes(alert.id) ? { ...alert, is_read: true } : alert
+        )
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  function handleClearRequests() {
+    const nextDismissed = dismissRequestNotificationKeys(
+      currentUser.id,
+      requestNotifications.map((notification) => notification.key)
+    );
+    setDismissedKeys(nextDismissed);
+    window.dispatchEvent(new Event(REQUEST_NOTIFICATION_STATE_EVENT));
+  }
 
   return (
     <div className={`app-shell ${isSidebarOpen ? "app-shell--sidebar-open" : ""}`}>
@@ -211,8 +277,8 @@ function DashboardLayout({ children }) {
                   <span className="app-shell__nav-label">{item.label}</span>
                   <small className="app-shell__nav-desc">{item.description}</small>
                 </span>
-                {item.path === "/requests" && requestBadgeCount > 0 ? (
-                  <span className="app-shell__nav-badge">{requestBadgeCount}</span>
+                {item.path === "/requests" && requestNotifications.length > 0 ? (
+                  <span className="app-shell__nav-badge">{requestNotifications.length}</span>
                 ) : null}
               </Link>
             );
@@ -253,6 +319,114 @@ function DashboardLayout({ children }) {
               <p className="app-shell__user-label">Signed in</p>
               <strong>{userName}</strong>
             </div>
+
+            <div className="notification-center">
+              <button
+                type="button"
+                className={`notification-center__trigger ${showNotificationCenter ? "notification-center__trigger--active" : ""}`}
+                onClick={() => setShowNotificationCenter((open) => !open)}
+              >
+                <span className="notification-center__icon">NT</span>
+                <span className="notification-center__label">Notifications</span>
+                <span className="notification-center__count">{notificationCount}</span>
+              </button>
+
+              {showNotificationCenter ? (
+                <div className="notification-center__panel">
+                  <div className="notification-center__section">
+                    <div className="notification-center__section-header">
+                      <div>
+                        <strong>Requests</strong>
+                        <p>Approval and workflow updates</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="secondary-button secondary-button--small"
+                        onClick={handleClearRequests}
+                        disabled={requestNotifications.length === 0}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="notification-center__feed">
+                      {requestNotifications.length === 0 ? (
+                        <div className="empty-state">No pending request notifications.</div>
+                      ) : (
+                        requestNotifications.slice(0, 5).map((notification) => (
+                          <button
+                            key={notification.key}
+                            type="button"
+                            className="request-notice-card request-notice-card--compact"
+                            onClick={() => {
+                              navigate("/requests");
+                              setShowNotificationCenter(false);
+                            }}
+                          >
+                            <div className="request-notice-card__header">
+                              <div className="request-notice-card__header-main">
+                                <span className={`status-chip status-chip--${notification.status.toLowerCase()}`}>
+                                  {notification.status}
+                                </span>
+                                <strong>{notification.title}</strong>
+                              </div>
+                              <span className="request-notice-card__meta">{notification.meta}</span>
+                            </div>
+                            <p>{notification.message}</p>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="notification-center__section">
+                    <div className="notification-center__section-header">
+                      <div>
+                        <strong>Alerts</strong>
+                        <p>Unread system alerts</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="secondary-button secondary-button--small"
+                        onClick={() => void handleClearAlerts()}
+                        disabled={unreadAlerts.length === 0}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="notification-center__feed">
+                      {unreadAlerts.length === 0 ? (
+                        <div className="empty-state">No unread system alerts.</div>
+                      ) : (
+                        unreadAlerts.slice(0, 5).map((alert) => (
+                          <article key={alert.id} className="request-notice-card request-notice-card--compact">
+                            <div className="request-notice-card__header">
+                              <div className="request-notice-card__header-main">
+                                <span className="status-chip status-chip--rejected">Alert</span>
+                                <strong>{alert.title}</strong>
+                              </div>
+                              <span className="request-notice-card__meta">
+                                {new Date(alert.created_at).toLocaleString()}
+                              </span>
+                            </div>
+                            <p>{alert.message}</p>
+                            <div className="action-row">
+                              <button
+                                type="button"
+                                className="secondary-button secondary-button--small"
+                                onClick={() => void handleResolveAlert(alert.id)}
+                              >
+                                Resolve
+                              </button>
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <button onClick={handleLogout} className="app-shell__logout-link">
               Sign Out
             </button>

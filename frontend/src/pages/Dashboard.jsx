@@ -11,7 +11,9 @@ import {
 } from "../services/api";
 import {
   buildRequestNotifications,
-  getDismissedRequestNotificationKeys
+  dismissRequestNotificationKeys,
+  getDismissedRequestNotificationKeys,
+  REQUEST_NOTIFICATION_STATE_EVENT
 } from "../utils/requestNotifications";
 
 const LIVE_UPDATE_EVENT = "inventory-live-update";
@@ -40,8 +42,9 @@ function Dashboard() {
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState("");
   const [requestError, setRequestError] = useState("");
-
-  const dismissedKeys = getDismissedRequestNotificationKeys(currentUser.id);
+  const [dismissedKeys, setDismissedKeys] = useState(() =>
+    getDismissedRequestNotificationKeys(currentUser.id)
+  );
 
   useEffect(() => {
     let active = true;
@@ -63,8 +66,8 @@ function Dashboard() {
           lowStock: Number(statsData.lowStock || 0),
           totalValue: statsData.totalValue
         });
-        setAlerts(alertData || []);
-        setAvailability((availabilityData || []).slice(0, 12));
+        setAlerts(Array.isArray(alertData) ? alertData : []);
+        setAvailability((availabilityData || []).slice(0, 10));
         setError("");
       } catch (loadError) {
         setError(loadError.message || "Failed to load dashboard data");
@@ -84,6 +87,18 @@ function Dashboard() {
       window.removeEventListener(LIVE_UPDATE_EVENT, handleLiveUpdate);
     };
   }, []);
+
+  useEffect(() => {
+    function handleNotificationStateRefresh() {
+      setDismissedKeys(getDismissedRequestNotificationKeys(currentUser.id));
+    }
+
+    window.addEventListener(REQUEST_NOTIFICATION_STATE_EVENT, handleNotificationStateRefresh);
+
+    return () => {
+      window.removeEventListener(REQUEST_NOTIFICATION_STATE_EVENT, handleNotificationStateRefresh);
+    };
+  }, [currentUser.id]);
 
   useEffect(() => {
     let active = true;
@@ -122,40 +137,71 @@ function Dashboard() {
   const cards = useMemo(() => {
     const items = [
       {
-        label: "Total Items in Store",
+        label: "Total Items",
         value: stats.totalItems,
-        helper: "Managed Items in Stores",
+        helper: "Visible in current scope",
         icon: "IT",
         path: "/inventory"
       },
       {
-        label: "Low Stock Items",
+        label: "Low Stock",
         value: stats.lowStock,
-        helper: "Requires Action",
+        helper: "Needs replenishment",
         icon: "LS",
         path: "/inventory"
+      },
+      {
+        label: "Pending Requests",
+        value: requests.filter((request) => request.status === "PENDING").length,
+        helper: "Open workflows",
+        icon: "RQ",
+        path: "/requests"
       }
     ];
 
     if (!isStaff) {
       items.push({
-        label: "Total Asset Value",
+        label: "Inventory Value",
         value: `$${Number(stats.totalValue || 0).toLocaleString()}`,
-        helper: "Current Book Value",
+        helper: "Current book value",
         icon: "AV",
         path: "/reports"
       });
     }
 
     return items;
-  }, [isStaff, stats]);
+  }, [isStaff, requests, stats]);
 
   const requestNotifications = useMemo(
-    () => buildRequestNotifications(requests, currentUser.id, dismissedKeys).slice(0, 6),
+    () => buildRequestNotifications(requests, currentUser.id, dismissedKeys).slice(0, 4),
     [currentUser.id, dismissedKeys, requests]
   );
 
-  const availableAlerts = alerts.slice(0, 5);
+  const unreadAlerts = useMemo(
+    () => alerts.filter((alert) => !alert.is_read).slice(0, 3),
+    [alerts]
+  );
+
+  async function handleResolveAlert(alertId) {
+    try {
+      await markAlertAsRead(alertId);
+      setAlerts((current) =>
+        current.map((alert) =>
+          alert.id === alertId ? { ...alert, is_read: true } : alert
+        )
+      );
+    } catch (actionError) {
+      setError(actionError.message || "Failed to update alert");
+    }
+  }
+
+  function handleClearRequests() {
+    dismissRequestNotificationKeys(
+      currentUser.id,
+      requestNotifications.map((notification) => notification.key)
+    );
+    window.dispatchEvent(new Event(REQUEST_NOTIFICATION_STATE_EVENT));
+  }
 
   return (
     <DashboardLayout>
@@ -169,7 +215,7 @@ function Dashboard() {
             >
               <div className="dashboard-card__header">
                 <p>{card.label}</p>
-                <span style={{ fontSize: "1.5rem" }}>{card.icon}</span>
+                <span className="dashboard-metric-card__icon">{card.icon}</span>
               </div>
               <h3>{card.value}</h3>
               <span className="dashboard-card__badge">{card.helper}</span>
@@ -180,70 +226,82 @@ function Dashboard() {
         {error ? <div className="dashboard-error-card">{error}</div> : null}
 
         <section className="dashboard-grid">
-          <div className="dashboard-card">
+          <div className="dashboard-card dashboard-card--compact">
             <header className="dashboard-card__header">
               <div>
-                <p className="dashboard-card__eyebrow">Items Requests</p>
-                <h3>All Requests</h3>
+                <p className="dashboard-card__eyebrow">Requests</p>
+                <h3>Workflow Notifications</h3>
               </div>
-              <span className="dashboard-card__badge">
-                {requestNotifications.length} Pending
-              </span>
+              <div className="action-row">
+                <span className="dashboard-card__badge">{requestNotifications.length} Active</span>
+                <button
+                  type="button"
+                  className="secondary-button secondary-button--small"
+                  onClick={handleClearRequests}
+                  disabled={requestNotifications.length === 0}
+                >
+                  Clear
+                </button>
+              </div>
             </header>
 
             {requestError ? <p className="dashboard-card__alert">{requestError}</p> : null}
 
-            <div className="dashboard-notifications">
+            <div className="dashboard-notifications dashboard-notifications--compact">
               {requestNotifications.length === 0 ? (
-                <div className="dashboard-card__empty" style={{ textAlign: "center", padding: "2rem 0" }}>
-                  <span style={{ fontSize: "2rem", display: "block", marginBottom: "0.5rem" }}>OK</span>
-                  <p>All workflows are up to date</p>
+                <div className="dashboard-card__empty dashboard-card__empty--compact">
+                  <span>OK</span>
+                  <p>All request workflows are up to date.</p>
                 </div>
               ) : (
                 requestNotifications.map((notification) => (
-                  <article key={notification.key} className="dashboard-notification">
+                  <article key={notification.key} className="dashboard-notification dashboard-notification--compact">
                     <div>
                       <strong>{notification.title}</strong>
                       <p>{notification.message}</p>
                     </div>
-                    <span>{notification.meta}</span>
+                    <div className="action-row">
+                      <span className="request-notice-card__meta">{notification.meta}</span>
+                      <button
+                        type="button"
+                        className="secondary-button secondary-button--small"
+                        onClick={() => navigate("/requests")}
+                      >
+                        Open
+                      </button>
+                    </div>
                   </article>
                 ))
               )}
             </div>
           </div>
 
-          <div className="dashboard-card">
-            <div className="dashboard-card__header">
+          <div className="dashboard-card dashboard-card--compact">
+            <header className="dashboard-card__header">
               <div>
-                <p className="dashboard-card__eyebrow">System Alerts</p>
-                <h3>All Alerts</h3>
+                <p className="dashboard-card__eyebrow">Alerts</p>
+                <h3>Unread System Alerts</h3>
               </div>
-              <button
-                type="button"
-                className="dashboard-card__ghost"
-                onClick={() => availableAlerts.forEach((alert) => markAlertAsRead(alert.id))}
-              >
-                Mark all resolved
-              </button>
-            </div>
-            <div className="dashboard-alert-stream">
-              {availableAlerts.length === 0 ? (
-                <div className="dashboard-card__empty" style={{ textAlign: "center", padding: "2rem 0" }}>
-                  <span style={{ fontSize: "2rem", display: "block", marginBottom: "0.5rem" }}>AL</span>
-                  <p>No active system alerts</p>
+              <span className="dashboard-card__badge">{unreadAlerts.length} Unread</span>
+            </header>
+
+            <div className="dashboard-alert-stream dashboard-alert-stream--compact">
+              {unreadAlerts.length === 0 ? (
+                <div className="dashboard-card__empty dashboard-card__empty--compact">
+                  <span>AL</span>
+                  <p>No active unread alerts.</p>
                 </div>
               ) : (
-                availableAlerts.map((alert) => (
-                  <article key={alert.id} className="dashboard-alert">
+                unreadAlerts.map((alert) => (
+                  <article key={alert.id} className="dashboard-alert dashboard-alert--compact">
                     <div>
                       <strong>{alert.title}</strong>
                       <p>{alert.message}</p>
                     </div>
                     <button
                       type="button"
-                      className="dashboard-alert__resolve"
-                      onClick={() => markAlertAsRead(alert.id)}
+                      className="secondary-button secondary-button--small"
+                      onClick={() => void handleResolveAlert(alert.id)}
                     >
                       Resolve
                     </button>
@@ -257,15 +315,15 @@ function Dashboard() {
         <section className="dashboard-card dashboard-card--tall">
           <header className="dashboard-card__header">
             <div>
-              <p className="dashboard-card__eyebrow">All Stores Summary</p>
-              <h3>Items Location Summary</h3>
+              <p className="dashboard-card__eyebrow">Stock Visibility</p>
+              <h3>Items by Available Location</h3>
             </div>
             <button
               type="button"
               className="dashboard-hero-card__cta"
               onClick={() => navigate("/inventory")}
             >
-              View My Store
+              View Inventory
             </button>
           </header>
           <div className="dashboard-table-wrap">
@@ -273,22 +331,32 @@ function Dashboard() {
               <thead>
                 <tr>
                   <th>Item</th>
-                  <th>Primary Location</th>
-                  <th className="text-right">Qty Available</th>
+                  <th>Location</th>
+                  <th className="text-right">Available Qty</th>
                 </tr>
               </thead>
               <tbody>
-                {availability.map((row) => (
-                  <tr key={`${row.item_id}-${row.location_id}`}>
-                    <td>
-                      <ItemIdentity name={row.item_name} imagePath={row.item_image} compact />
-                    </td>
-                    <td>{row.location}</td>
-                    <td className="text-right" style={{ fontWeight: "bold" }}>
-                      {row.available_quantity}
+                {availability.length === 0 ? (
+                  <tr>
+                    <td colSpan="3" className="inventory-table__empty">
+                      No stock snapshot available.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  availability.map((row) => (
+                    <tr key={`${row.item_id}-${row.location_id}`}>
+                      <td>
+                        <ItemIdentity
+                          name={row.item_name}
+                          imagePath={row.item_image}
+                          compact
+                        />
+                      </td>
+                      <td>{row.location}</td>
+                      <td className="text-right font-bold">{row.available_quantity}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

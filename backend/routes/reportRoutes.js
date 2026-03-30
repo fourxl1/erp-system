@@ -6,10 +6,10 @@ const { validate, validationSchemas } = require("../middleware/validationMiddlew
 
 const router = express.Router();
 
-router.get("/movements", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.getMovementReport);
-router.get("/movements/pdf", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportMovementReportPdf);
-router.get("/movements/csv", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportMovementReportCsv);
-router.get("/movements/excel", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportMovementReportExcel);
-router.get("/inventory-value", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.getInventoryValueReport);
+router.get("/movements", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.getMovementReport);
+router.get("/movements/pdf", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportMovementReportPdf);
+router.get("/movements/csv", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportMovementReportCsv);
+router.get("/movements/excel", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportMovementReportExcel);
+router.get("/inventory-value", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.getInventoryValueReport);
 
 module.exports = router;

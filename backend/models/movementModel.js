@@ -15,7 +15,7 @@ async function getBalanceForUpdate(client, itemId, locationId) {
     `
       SELECT item_id, location_id, quantity
       FROM inventory_balance
-      WHERE item_id = $1 AND location_id = $2
+      WHERE item_id = $1::BIGINT AND location_id = $2::BIGINT
       FOR UPDATE
     `,
     [itemId, locationId]
@@ -29,11 +29,11 @@ async function upsertBalance(client, itemId, locationId, deltaQuantity) {
     `
       UPDATE inventory_balance
       SET
-        quantity = quantity + $3,
+        quantity = quantity + $3::NUMERIC,
         updated_at = NOW()
-      WHERE item_id = $1
-        AND location_id = $2
-        AND quantity + $3 >= 0
+      WHERE item_id = $1::BIGINT
+        AND location_id = $2::BIGINT
+        AND quantity + $3::NUMERIC >= 0
       RETURNING *
     `,
     [itemId, locationId, deltaQuantity]
@@ -46,12 +46,12 @@ async function upsertBalance(client, itemId, locationId, deltaQuantity) {
   const insertResult = await client.query(
     `
       INSERT INTO inventory_balance (item_id, location_id, quantity, updated_at)
-      SELECT $1, $2, $3, NOW()
-      WHERE $3 >= 0
+      SELECT $1::BIGINT, $2::BIGINT, $3::NUMERIC, NOW()
+      WHERE $3::NUMERIC >= 0
         AND NOT EXISTS (
           SELECT 1
           FROM inventory_balance
-          WHERE item_id = $1 AND location_id = $2
+          WHERE item_id = $1::BIGINT AND location_id = $2::BIGINT
         )
       RETURNING *
     `,
@@ -82,8 +82,9 @@ async function createMovement(client, movement) {
         created_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11, $12, $13, $14, COALESCE($15, NOW())
+        $1::BIGINT, $2::BIGINT, $3::BIGINT, $4::TEXT, $5::NUMERIC, $6::NUMERIC, $7::TEXT,
+        $8::BIGINT, $9::BIGINT, $10::BIGINT, $11::BIGINT, $12::BIGINT, $13::BIGINT, $14::BIGINT,
+        COALESCE($15::TIMESTAMP, NOW())
       )
       RETURNING *
     `,
@@ -127,7 +128,7 @@ async function getMovementById(id, options = {}) {
         ), 0) AS maintenance_usage_count
       FROM stock_movements sm
       LEFT JOIN inventory_ledger il ON il.movement_id = sm.id
-      WHERE sm.id = $1
+      WHERE sm.id = $1::BIGINT
       ${lockingClause}
     `,
     [id]
@@ -141,22 +142,22 @@ async function updateMovement(client, id, movement) {
     `
       UPDATE stock_movements
       SET
-        item_id = $1,
-        location_id = $2,
-        section_id = $3,
-        movement_type = $4,
-        quantity = $5,
-        unit_cost = $6,
-        reference = $7,
-        source_location_id = $8,
-        destination_location_id = $9,
-        asset_id = $10,
-        recipient_id = $11,
-        supplier_id = $12,
-        request_id = $13,
-        performed_by = $14,
-        created_at = $15
-      WHERE id = $16
+        item_id = $1::BIGINT,
+        location_id = $2::BIGINT,
+        section_id = $3::BIGINT,
+        movement_type = $4::TEXT,
+        quantity = $5::NUMERIC,
+        unit_cost = $6::NUMERIC,
+        reference = $7::TEXT,
+        source_location_id = $8::BIGINT,
+        destination_location_id = $9::BIGINT,
+        asset_id = $10::BIGINT,
+        recipient_id = $11::BIGINT,
+        supplier_id = $12::BIGINT,
+        request_id = $13::BIGINT,
+        performed_by = $14::BIGINT,
+        created_at = $15::TIMESTAMP
+      WHERE id = $16::BIGINT
       RETURNING *
     `,
     [
@@ -194,7 +195,15 @@ async function createLedgerEntry(client, entry) {
         total_cost,
         created_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, NOW()))
+      VALUES (
+        $1::BIGINT,
+        $2::BIGINT,
+        $3::BIGINT,
+        $4::NUMERIC,
+        $5::NUMERIC,
+        $6::NUMERIC,
+        COALESCE($7::TIMESTAMP, NOW())
+      )
       RETURNING *
     `,
     [
@@ -216,13 +225,13 @@ async function saveLedgerEntry(client, entry) {
     `
       UPDATE inventory_ledger
       SET
-        item_id = $1,
-        location_id = $2,
-        quantity = $3,
-        unit_cost = $4,
-        total_cost = $5,
-        created_at = COALESCE($6, created_at)
-      WHERE movement_id = $7
+        item_id = $1::BIGINT,
+        location_id = $2::BIGINT,
+        quantity = $3::NUMERIC,
+        unit_cost = $4::NUMERIC,
+        total_cost = $5::NUMERIC,
+        created_at = COALESCE($6::TIMESTAMP, created_at)
+      WHERE movement_id = $7::BIGINT
       RETURNING *
     `,
     [
@@ -247,7 +256,7 @@ async function deleteLedgerEntries(client, movementId) {
   const result = await client.query(
     `
       DELETE FROM inventory_ledger
-      WHERE movement_id = $1
+      WHERE movement_id = $1::BIGINT
       RETURNING *
     `,
     [movementId]
@@ -260,7 +269,7 @@ async function deleteMovement(client, id) {
   const result = await client.query(
     `
       DELETE FROM stock_movements
-      WHERE id = $1
+      WHERE id = $1::BIGINT
       RETURNING *
     `,
     [id]
@@ -274,7 +283,7 @@ async function insertMovementLog(client, entry) {
     const result = await client.query(
       `
         INSERT INTO movement_logs (movement_id, action, old_value, new_value, changed_by)
-        VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)
+        VALUES ($1::BIGINT, $2::TEXT, $3::jsonb, $4::jsonb, $5::BIGINT)
         RETURNING *
       `,
       [
@@ -305,11 +314,11 @@ async function insertMovementLog(client, entry) {
 
 async function getAverageUnitCost(itemId, locationId = null) {
   const values = [itemId];
-  let where = "WHERE item_id = $1 AND quantity > 0";
+  let where = "WHERE item_id = $1::BIGINT AND quantity > 0";
 
   if (locationId) {
     values.push(locationId);
-    where += ` AND location_id = $${values.length}`;
+    where += ` AND location_id = $${values.length}::BIGINT`;
   }
 
   const result = await query(
@@ -334,27 +343,27 @@ async function listMovements(filters = {}) {
 
   if (filters.itemId) {
     values.push(filters.itemId);
-    conditions.push(`sm.item_id = $${values.length}`);
+    conditions.push(`sm.item_id = $${values.length}::BIGINT`);
   }
 
   if (filters.locationId) {
     values.push(filters.locationId);
-    conditions.push(`sm.location_id = $${values.length}`);
+    conditions.push(`sm.location_id = $${values.length}::BIGINT`);
   }
 
   if (filters.movementType) {
     values.push(filters.movementType);
-    conditions.push(`sm.movement_type = $${values.length}`);
+    conditions.push(`sm.movement_type = $${values.length}::TEXT`);
   }
 
   if (filters.startDate) {
     values.push(filters.startDate);
-    conditions.push(`sm.created_at >= $${values.length}`);
+    conditions.push(`sm.created_at >= $${values.length}::TIMESTAMP`);
   }
 
   if (filters.endDate) {
     values.push(filters.endDate);
-    conditions.push(`sm.created_at <= $${values.length}`);
+    conditions.push(`sm.created_at <= $${values.length}::TIMESTAMP`);
   }
 
   const result = await query(
@@ -413,17 +422,17 @@ async function listDailyMovements(filters = {}) {
 
   if (filters.itemId) {
     values.push(filters.itemId);
-    conditions.push(`sm.item_id = $${values.length}`);
+    conditions.push(`sm.item_id = $${values.length}::BIGINT`);
   }
 
   if (filters.locationId) {
     values.push(filters.locationId);
-    conditions.push(`sm.location_id = $${values.length}`);
+    conditions.push(`sm.location_id = $${values.length}::BIGINT`);
   }
 
   if (filters.movementType) {
     values.push(filters.movementType);
-    conditions.push(`sm.movement_type = $${values.length}`);
+    conditions.push(`sm.movement_type = $${values.length}::TEXT`);
   }
 
   const result = await query(
