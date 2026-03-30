@@ -161,25 +161,27 @@ function Inventory() {
 
   return (
     <DashboardLayout>
-      <div className="inventory-shell space-y-8">
-        <section className="inventory-hero">
-          <div className="inventory-hero__content">
-            <p className="inventory-hero__eyebrow">Store Center</p>
-            <h2 className="inventory-hero__title">Manage your store.</h2>
-            <p className="inventory-hero__copy">
-              Monitor stock levels, suppliers, recipients and organize your items with ease.
-            </p>
+      <div className="inventory-container">
+        {/* TOP SECTION: Page Title & Add Button */}
+        <div className="inventory-top-bar">
+          <div>
+            <h1 className="inventory-page-title">Inventory</h1>
+            <p className="inventory-page-subtitle">Manage stock levels and item details</p>
           </div>
-          <div className="inventory-hero__stats">
-            {heroStats.map((stat) => (
-              <article key={stat.label} className="inventory-hero__stat-card">
-                <p>{stat.label}</p>
-                <strong>{stat.value}</strong>
-              </article>
-            ))}
-          </div>
-        </section>
+          <button
+            type="button"
+            className="inventory-add-btn"
+            onClick={() => {
+              if (showForm && formData.id) setFormData(emptyForm);
+              setShowForm((prev) => !prev);
+            }}
+            title="Add new item"
+          >
+            + Add Item
+          </button>
+        </div>
 
+        {/* Error Alert */}
         {error && (
           <div className="dashboard-card__alert dashboard-card__alert--error">
             <span>{error}</span>
@@ -187,25 +189,43 @@ function Inventory() {
           </div>
         )}
 
-        <section className={`inventory-card ${showForm ? "inventory-card--expanded" : ""}`}>
-          <div className="inventory-card__header">
+        {/* MIDDLE SECTION: Store Summary Card (Compact) */}
+        <div className="inventory-store-card">
+          <div className="store-card-header">
             <div>
-              <p className="dashboard-card__eyebrow">Item Management</p>
-              <h3>{formData.id ? "Edit Item Details" : "Add New Item"}</h3>
+              <h3 className="store-card-title">Store Summary</h3>
+              <p className="store-card-subtitle">Current inventory status</p>
             </div>
-            <button
-              type="button"
-              className={`inventory-card__toggle ${showForm ? "active" : ""}`}
-              onClick={() => {
-                if (showForm && formData.id) setFormData(emptyForm);
-                setShowForm((prev) => !prev);
-              }}
-            >
-              {showForm ? "Cancel" : "+ Add Item"}
-            </button>
           </div>
+          <div className="store-card-stats">
+            {heroStats.map((stat) => (
+              <div key={stat.label} className="store-stat">
+                <span className="store-stat-label">{stat.label}</span>
+                <strong className="store-stat-value">{stat.value}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
 
-          {showForm && (
+        {/* Add Item Form Section */}
+        {showForm && (
+          <section className="inventory-form-section">
+            <div className="form-header">
+              <div>
+                <h3>{formData.id ? "Edit Item" : "Add New Item"}</h3>
+              </div>
+              <button
+                type="button"
+                className="form-close-btn"
+                onClick={() => {
+                  setFormData(emptyForm);
+                  setShowForm(false);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
             <div className="inventory-card__body">
               <div className="inventory-form-groups">
                 <div className="inventory-form-group">
@@ -342,31 +362,30 @@ function Inventory() {
                 </button>
               </div>
             </div>
-          )}
-        </section>
+          </section>
+        )}
 
-        <section className="inventory-panel">
-          <div className="inventory-panel__header">
-            <div className="inventory-panel__title">
-              <p className="dashboard-card__eyebrow">Store Overview</p>
-              <h3>All Items</h3>
+        {/* BOTTOM SECTION: Items Table/Cards */}
+        <section className="inventory-items-section">
+          <div className="items-header">
+            <div>
+              <h3 className="items-title">All Items</h3>
+              <p className="items-subtitle">{filteredItems.length} items</p>
             </div>
-            <div className="inventory-panel__controls">
-              <div className="search-wrapper">
-                <input
-                  className="inventory-search"
-                  placeholder="Search by name, category, or supplier..."
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-                {search && (
-                  <button className="search-clear" onClick={() => setSearch("")}>×</button>
-                )}
-              </div>
+            <div className="search-wrapper">
+              <input
+                className="inventory-search"
+                placeholder="Search by name, category, or supplier..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              {search && (
+                <button className="search-clear" onClick={() => setSearch("")}>×</button>
+              )}
             </div>
           </div>
 
-          <div className="inventory-panel__summary" aria-label="Store overview summary">
+          <div className="inventory-panel__summary inventory-filter-stats" aria-label="Store overview summary">
             {overviewStats.map((stat) => (
               <article key={stat.label} className="inventory-panel__summary-card">
                 <span>{stat.label}</span>
@@ -375,6 +394,7 @@ function Inventory() {
             ))}
           </div>
 
+          {/* Desktop Table */}
           <div className="inventory-table-wrapper">
             <table className="inventory-table">
               <caption className="inventory-table__caption">
@@ -457,45 +477,64 @@ function Inventory() {
             </table>
           </div>
 
+          {/* Mobile Card View */}
           <div className="inventory-mobile-list">
-            {filteredItems.map((item) => {
-              const isLowStock = (item.current_quantity || 0) <= (item.reorder_level || 0);
-              return (
-                <article key={item.id} className={`inventory-mobile-card ${isLowStock ? "inventory-mobile-card--warning" : ""}`}>
-                  <div className="inventory-mobile-card__head">
-                    <ItemIdentity name={item.name} imagePath={item.image_url} compact />
-                    <div className="inventory-mobile-card__title-group">
-                      <span className="badge-chip badge-chip--xsmall">{item.category}</span>
-                      <p className="text-muted small">{item.supplier}</p>
+            {filteredItems.length > 0 ? (
+              filteredItems.map((item) => {
+                const isLowStock = (item.current_quantity || 0) <= (item.reorder_level || 0);
+                return (
+                  <article key={item.id} className={`inventory-mobile-card ${isLowStock ? "inventory-mobile-card--warning" : ""}`}>
+                    <div className="inventory-mobile-card__head">
+                      <ItemIdentity name={item.name} imagePath={item.image_url} compact />
+                      <div className="inventory-mobile-card__title-group">
+                        <span className="badge-chip badge-chip--xsmall">{item.category}</span>
+                        <p className="text-muted small">{item.supplier}</p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="inventory-mobile-card__meta">
-                    <div className="meta-item">
-                      <small>STOCK</small>
-                      <strong>{item.current_quantity ?? 0} {item.unit}</strong>
+                    <div className="inventory-mobile-card__meta">
+                      <div className="meta-item">
+                        <small>STOCK</small>
+                        <strong>{item.current_quantity ?? 0} {item.unit}</strong>
+                      </div>
+                      <div className="meta-item">
+                        <small>REORDER</small>
+                        <strong>{item.reorder_level ?? "-"}</strong>
+                      </div>
+                      <div className="meta-item text-right">
+                        <small>STATUS</small>
+                        <span className={`status-dot ${isLowStock ? "status-dot--red" : "status-dot--green"}`}></span>
+                      </div>
                     </div>
-                    <div className="meta-item">
-                      <small>REORDER</small>
-                      <strong>{item.reorder_level ?? "-"}</strong>
+                    <div className="inventory-mobile-card__actions">
+                      <button className="secondary-button secondary-button--small" onClick={() => handleEdit(item)} disabled={loading}>
+                        Edit
+                      </button>
+                      <button className="secondary-button secondary-button--small secondary-button--danger" onClick={() => handleDelete(item.id)} disabled={loading}>
+                        Delete
+                      </button>
                     </div>
-                    <div className="meta-item text-right">
-                      <small>STATUS</small>
-                      <span className={`status-dot ${isLowStock ? "status-dot--red" : "status-dot--green"}`}></span>
-                    </div>
-                  </div>
-                  <div className="inventory-mobile-card__actions">
-                    <button className="secondary-button secondary-button--small" onClick={() => handleEdit(item)} disabled={loading}>
-                      Edit
-                    </button>
-                    <button className="secondary-button secondary-button--small secondary-button--danger" onClick={() => handleDelete(item.id)} disabled={loading}>
-                      Delete
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+                  </article>
+                );
+              })
+            ) : (
+              <div className="inventory-empty-state">
+                <p>No items found matching your search.</p>
+              </div>
+            )}
           </div>
         </section>
+
+        {/* Floating Add Button (Mobile) */}
+        <button
+          className="inventory-fab-btn"
+          onClick={() => {
+            if (showForm && formData.id) setFormData(emptyForm);
+            setShowForm((prev) => !prev);
+          }}
+          title="Add new item"
+        >
+          +
+        </button>
       </div>
     </DashboardLayout>
   );
