@@ -10,38 +10,253 @@ import {
   REQUEST_NOTIFICATION_STATE_EVENT,
   REQUEST_REFRESH_EVENT
 } from "../utils/requestNotifications";
-import { hasAllowedRole, readStoredUser } from "../utils/auth";
+import { hasAllowedRole, normalizeRoleName, readStoredUser } from "../utils/auth";
 
 const LIVE_UPDATE_EVENT = "inventory-live-update";
 
-const navItems = [
-  { path: "/dashboard", label: "Dashboard", description: "Overview and analytics", icon: "DB" },
-  { path: "/inventory", label: "Inventory", description: "Stores, counts, and categories", icon: "IV" },
-  { path: "/movements", label: "Movements", description: "Stock in, out, transfers, and adjustments", icon: "MV" },
-  { path: "/requests", label: "Requests", description: "Requests and approvals", icon: "RQ" },
-  { path: "/messages", label: "Messages", description: "Inbox and internal communication", icon: "MS" },
-  { path: "/maintenance", label: "Maintenance", description: "Repairs and maintenance", icon: "MT" },
+const MASTER_DATA_SETTINGS_TABS = [
+  "units",
+  "locations",
+  "sections",
+  "assets",
+  "suppliers",
+  "users",
+  "recipients"
+];
+
+const navSections = [
   {
-    path: "/master-data",
-    label: "Master Data",
-    description: "Locations, suppliers, units, and users",
-    icon: "MD",
-    allowedRoles: ["admin", "superadmin"]
+    key: "main",
+    label: "Main",
+    items: [
+      {
+        path: "/dashboard",
+        label: "Dashboard",
+        description: "Overview and analytics",
+        icon: "dashboard"
+      }
+    ]
   },
   {
-    path: "/reports",
-    label: "Reports",
-    description: "Operational and financial reporting",
-    icon: "RP",
-    allowedRoles: ["staff", "admin", "superadmin"]
+    key: "inventory",
+    label: "Inventory",
+    items: [
+      {
+        path: "/inventory",
+        label: "Items",
+        description: "Browse and manage inventory items",
+        icon: "items"
+      },
+      {
+        path: "/master-data",
+        tab: "categories",
+        matchTabs: ["categories"],
+        label: "Categories",
+        description: "Manage item categories",
+        icon: "categories",
+        allowedRoles: ["admin", "superadmin"]
+      },
+      {
+        path: "/movements",
+        label: "Stock Movements",
+        description: "Track stock in, out, and adjustments",
+        icon: "movements"
+      }
+    ]
+  },
+  {
+    key: "operations",
+    label: "Operations",
+    items: [
+      {
+        path: "/requests",
+        label: "Requests",
+        description: "Requests and approvals",
+        icon: "requests"
+      },
+      {
+        path: "/maintenance",
+        label: "Maintenance",
+        description: "Repairs and maintenance",
+        icon: "maintenance"
+      },
+      {
+        path: "/messages",
+        label: "Messages",
+        description: "Inbox and internal communication",
+        icon: "messages"
+      }
+    ]
+  },
+  {
+    key: "analytics",
+    label: "Analytics",
+    items: [
+      {
+        path: "/reports",
+        label: "Reports",
+        description: "Operational and financial reporting",
+        icon: "reports",
+        allowedRoles: ["staff", "admin", "superadmin"]
+      }
+    ]
+  },
+  {
+    key: "system",
+    label: "System",
+    items: [
+      {
+        path: "/master-data",
+        tab: "users",
+        matchTabs: MASTER_DATA_SETTINGS_TABS,
+        label: "Settings",
+        description: "Users, units, suppliers, and system data",
+        icon: "settings",
+        allowedRoles: ["admin", "superadmin"]
+      }
+    ]
   }
 ];
+
+function formatRoleLabel(roleName) {
+  const normalizedRole = normalizeRoleName(roleName);
+
+  if (!normalizedRole) {
+    return "User";
+  }
+
+  if (normalizedRole === "superadmin") {
+    return "Super Admin";
+  }
+
+  return normalizedRole.charAt(0).toUpperCase() + normalizedRole.slice(1);
+}
+
+function getActiveMasterDataTab(search) {
+  const params = new URLSearchParams(search);
+  return params.get("tab") || "categories";
+}
+
+function isNavItemActive(item, pathname, activeMasterTab) {
+  if (item.path !== pathname) {
+    return false;
+  }
+
+  if (item.path !== "/master-data") {
+    return true;
+  }
+
+  if (!Array.isArray(item.matchTabs) || item.matchTabs.length === 0) {
+    return true;
+  }
+
+  return item.matchTabs.includes(activeMasterTab);
+}
+
+function buildNavTarget(item) {
+  if (!item.tab) {
+    return item.path;
+  }
+
+  return {
+    pathname: item.path,
+    search: `?tab=${item.tab}`
+  };
+}
+
+function SidebarIcon({ name }) {
+  switch (name) {
+    case "dashboard":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="3" y="3" width="8" height="8" rx="2" />
+          <rect x="13" y="3" width="8" height="5" rx="2" />
+          <rect x="13" y="10" width="8" height="11" rx="2" />
+          <rect x="3" y="13" width="8" height="8" rx="2" />
+        </svg>
+      );
+    case "items":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 8.5 12 4l8 4.5" />
+          <path d="M4 8.5V16l8 4 8-4V8.5" />
+          <path d="M12 12 20 8.5" />
+          <path d="M12 12 4 8.5" />
+          <path d="M12 12v8" />
+        </svg>
+      );
+    case "categories":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6.5 7h11" />
+          <path d="M6.5 12h11" />
+          <path d="M6.5 17h11" />
+          <circle cx="4.5" cy="7" r="1.25" />
+          <circle cx="4.5" cy="12" r="1.25" />
+          <circle cx="4.5" cy="17" r="1.25" />
+        </svg>
+      );
+    case "movements":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 7h10" />
+          <path d="m12 4 3 3-3 3" />
+          <path d="M19 17H9" />
+          <path d="m12 14-3 3 3 3" />
+        </svg>
+      );
+    case "requests":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M7 4h8l4 4v11a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+          <path d="M15 4v4h4" />
+          <path d="M8.5 12h7" />
+          <path d="M8.5 16h7" />
+        </svg>
+      );
+    case "maintenance":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m14 7 3-3 3 3-3 3" />
+          <path d="M5 19 14 10" />
+          <path d="m4 14 6 6" />
+          <path d="m7 11 6 6" />
+        </svg>
+      );
+    case "messages":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7A2.5 2.5 0 0 1 17.5 16H9l-5 4V6.5Z" />
+          <path d="m6.5 8 5.2 4 5.8-4" />
+        </svg>
+      );
+    case "reports":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6 20V9" />
+          <path d="M12 20V4" />
+          <path d="M18 20v-7" />
+        </svg>
+      );
+    case "settings":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" />
+          <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a1.75 1.75 0 0 1-2.48 2.48l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.92V19.5A1.75 1.75 0 0 1 13.75 21h-3.5A1.75 1.75 0 0 1 8.5 19.25v-.15a1 1 0 0 0-.6-.92 1 1 0 0 0-1.1.2l-.1.1a1.75 1.75 0 1 1-2.48-2.48l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.92-.6H3.5A1.75 1.75 0 0 1 2 12.75v-1.5A1.75 1.75 0 0 1 3.75 9.5h.15a1 1 0 0 0 .92-.6 1 1 0 0 0-.2-1.1l-.1-.1A1.75 1.75 0 1 1 7 5.22l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.92V4.5A1.75 1.75 0 0 1 10.55 3h2.9A1.75 1.75 0 0 1 15.2 4.75v.15a1 1 0 0 0 .6.92 1 1 0 0 0 1.1-.2l.1-.1a1.75 1.75 0 0 1 2.48 2.48l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .92.6h.15A1.75 1.75 0 0 1 22 11.25v1.5A1.75 1.75 0 0 1 20.25 14h-.15a1 1 0 0 0-.7 1Z" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
 
 function DashboardLayout({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const currentUser = readStoredUser();
   const userName = localStorage.getItem("inventory-user") || "Store User";
+  const currentRole = formatRoleLabel(currentUser.role_name);
+  const activeMasterTab = getActiveMasterDataTab(location.search);
 
   const [issueTitle, setIssueTitle] = useState("");
   const [issueMessage, setIssueMessage] = useState("");
@@ -190,14 +405,25 @@ function DashboardLayout({ children }) {
 
   const notificationCount = requestNotifications.length + unreadAlerts.length;
 
-  const visibleNavItems = useMemo(
-    () => navItems.filter((item) => hasAllowedRole(currentUser, item.allowedRoles)),
+  const visibleNavSections = useMemo(
+    () =>
+      navSections
+        .map((section) => ({
+          ...section,
+          items: section.items.filter((item) => hasAllowedRole(currentUser, item.allowedRoles))
+        }))
+        .filter((section) => section.items.length > 0),
     [currentUser]
   );
 
   const currentNavItem = useMemo(
-    () => visibleNavItems.find((item) => item.path === location.pathname) || visibleNavItems[0] || navItems[0],
-    [location.pathname, visibleNavItems]
+    () =>
+      visibleNavSections
+        .flatMap((section) => section.items)
+        .find((item) => isNavItemActive(item, location.pathname, activeMasterTab)) ||
+      visibleNavSections[0]?.items[0] ||
+      navSections[0].items[0],
+    [activeMasterTab, location.pathname, visibleNavSections]
   );
 
   async function handleResolveAlert(alertId) {
@@ -245,7 +471,13 @@ function DashboardLayout({ children }) {
 
       <aside className="app-shell__sidebar">
         <div className="app-shell__sidebar-header">
-          <BrandMark compact />
+          <div className="app-shell__sidebar-brand">
+            <BrandMark minimal />
+            <div className="app-shell__sidebar-status">
+              <p className="app-shell__sidebar-copy app-shell__sidebar-copy--menu">Inventory System</p>
+              <p className="app-shell__sidebar-copy">Latex Foam Store</p>
+            </div>
+          </div>
           <button
             className="app-shell__sidebar-close hide-tablet"
             onClick={() => setIsSidebarOpen(false)}
@@ -253,50 +485,55 @@ function DashboardLayout({ children }) {
           >
             x
           </button>
-          <div className="app-shell__sidebar-status">
-            <p className="app-shell__sidebar-copy app-shell__sidebar-copy--menu">Main Menu</p>
-          </div>
         </div>
 
-        <nav className="app-shell__nav">
-          {visibleNavItems.map((item) => {
-            const isActive = location.pathname === item.path;
+        <div className="app-shell__sidebar-body">
+          {visibleNavSections.map((section) => (
+            <nav key={section.key} className="app-shell__nav-section" aria-label={section.label}>
+              <p className="app-shell__nav-section-label">{section.label}</p>
+              <div className="app-shell__nav">
+                {section.items.map((item) => {
+                  const isActive = isNavItemActive(item, location.pathname, activeMasterTab);
 
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                onClick={() => setIsSidebarOpen(false)}
-                className={`app-shell__nav-link ${isActive ? "app-shell__nav-link--active" : ""}`}
-                aria-current={isActive ? "page" : undefined}
-              >
-                <span className="app-shell__nav-icon" aria-hidden="true">
-                  {item.icon}
-                </span>
-                <span className="app-shell__nav-link-content">
-                  <span className="app-shell__nav-label">{item.label}</span>
-                  <small className="app-shell__nav-desc">{item.description}</small>
-                </span>
-                {item.path === "/requests" && requestNotifications.length > 0 ? (
-                  <span className="app-shell__nav-badge">{requestNotifications.length}</span>
-                ) : null}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <button className="app-shell__sidebar-signout" onClick={() => setShowContactModal(true)}>
-          Report Issue
-        </button>
+                  return (
+                    <Link
+                      key={`${item.path}-${item.tab || "default"}`}
+                      to={buildNavTarget(item)}
+                      onClick={() => setIsSidebarOpen(false)}
+                      className={`app-shell__nav-link ${isActive ? "app-shell__nav-link--active" : ""}`}
+                      aria-current={isActive ? "page" : undefined}
+                    >
+                      <span className="app-shell__nav-icon" aria-hidden="true">
+                        <SidebarIcon name={item.icon} />
+                      </span>
+                      <span className="app-shell__nav-link-content">
+                        <span className="app-shell__nav-label">{item.label}</span>
+                      </span>
+                      {item.path === "/requests" && requestNotifications.length > 0 ? (
+                        <span className="app-shell__nav-badge">{requestNotifications.length}</span>
+                      ) : null}
+                    </Link>
+                  );
+                })}
+              </div>
+            </nav>
+          ))}
+        </div>
 
         <div className="app-shell__sidebar-footer">
+          <button className="app-shell__sidebar-utility" onClick={() => setShowContactModal(true)}>
+            Report Issue
+          </button>
           <div className="app-shell__sidebar-user-card">
             <div className="app-shell__sidebar-avatar">{userName.charAt(0).toUpperCase()}</div>
             <div className="app-shell__sidebar-user-meta">
-              <span>Signed in</span>
+              <span>{currentRole}</span>
               <strong>{userName}</strong>
             </div>
           </div>
+          <button onClick={handleLogout} className="app-shell__sidebar-logout">
+            Logout
+          </button>
         </div>
       </aside>
 
@@ -315,11 +552,6 @@ function DashboardLayout({ children }) {
           </div>
 
           <div className="app-shell__topbar-actions">
-            <div className="app-shell__user hide-tablet">
-              <p className="app-shell__user-label">Signed in</p>
-              <strong>{userName}</strong>
-            </div>
-
             <div className="notification-center">
               <button
                 type="button"
@@ -426,10 +658,6 @@ function DashboardLayout({ children }) {
                 </div>
               ) : null}
             </div>
-
-            <button onClick={handleLogout} className="app-shell__logout-link">
-              Sign Out
-            </button>
           </div>
         </header>
 

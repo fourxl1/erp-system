@@ -1,5 +1,15 @@
 const { query } = require("../config/db");
 
+const ACTIVE_REQUEST_ITEM_EXISTS = `
+  EXISTS (
+    SELECT 1
+    FROM stock_request_items sri_active
+    JOIN items i_active ON i_active.id = sri_active.item_id
+    WHERE sri_active.request_id = sr.id
+      AND i_active.is_active = TRUE
+  )
+`;
+
 async function createRequestHeader(client, requestData) {
   const result = await client.query(
     `
@@ -64,6 +74,7 @@ async function getRequestById(id) {
       LEFT JOIN locations source_location ON source_location.id = sr.source_location_id
       LEFT JOIN locations legacy_destination_location ON legacy_destination_location.id = sr.destination_location_id
       WHERE sr.id = $1::BIGINT
+        AND ${ACTIVE_REQUEST_ITEM_EXISTS}
     `,
     [id]
   );
@@ -88,6 +99,7 @@ async function getRequestByIdWithClient(client, id) {
       LEFT JOIN locations source_location ON source_location.id = sr.source_location_id
       LEFT JOIN locations legacy_destination_location ON legacy_destination_location.id = sr.destination_location_id
       WHERE sr.id = $1::BIGINT
+        AND ${ACTIVE_REQUEST_ITEM_EXISTS}
     `,
     [id]
   );
@@ -112,6 +124,7 @@ async function getRequestByIdForUpdate(client, id) {
       LEFT JOIN locations source_location ON source_location.id = sr.source_location_id
       LEFT JOIN locations legacy_destination_location ON legacy_destination_location.id = sr.destination_location_id
       WHERE sr.id = $1::BIGINT
+        AND ${ACTIVE_REQUEST_ITEM_EXISTS}
       FOR UPDATE OF sr
     `,
     [id]
@@ -129,7 +142,7 @@ async function getRequestItems(requestId) {
         i.unit,
         i.image_path AS item_image
       FROM stock_request_items sri
-      JOIN items i ON i.id = sri.item_id
+      JOIN items i ON i.id = sri.item_id AND i.is_active = TRUE
       WHERE sri.request_id = $1::BIGINT
       ORDER BY i.name
     `,
@@ -148,7 +161,7 @@ async function getRequestItemsWithClient(client, requestId) {
         i.unit,
         i.image_path AS item_image
       FROM stock_request_items sri
-      JOIN items i ON i.id = sri.item_id
+      JOIN items i ON i.id = sri.item_id AND i.is_active = TRUE
       WHERE sri.request_id = $1::BIGINT
       ORDER BY i.name
     `,
@@ -159,7 +172,7 @@ async function getRequestItemsWithClient(client, requestId) {
 }
 
 async function listRequests(filters = {}) {
-  const conditions = ["1 = 1"];
+  const conditions = [ACTIVE_REQUEST_ITEM_EXISTS];
   const values = [];
 
   if (filters.locationId) {

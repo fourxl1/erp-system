@@ -22,6 +22,21 @@ const emptyForm = {
   image: null
 };
 
+function getInventoryHealth(item) {
+  const currentQuantity = Number(item.current_quantity || 0);
+  const reorderLevel = Number(item.reorder_level || 0);
+
+  if (currentQuantity <= reorderLevel) {
+    return { label: "Low Stock", tone: "low" };
+  }
+
+  if (reorderLevel > 0 && currentQuantity <= reorderLevel * 1.5) {
+    return { label: "Medium", tone: "medium" };
+  }
+
+  return { label: "Healthy", tone: "healthy" };
+}
+
 function Inventory() {
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -34,7 +49,7 @@ function Inventory() {
   const [formData, setFormData] = useState(emptyForm);
 
   const unitsList = useMemo(
-    () => [...new Set(units.map((u) => u.name).filter(Boolean))],
+    () => [...new Set(units.map((unit) => unit.name).filter(Boolean))],
     [units]
   );
 
@@ -62,9 +77,9 @@ function Inventory() {
     void loadData();
   }, [loadData]);
 
-  function handleChange(e) {
-    const { name, value } = e.target;
-    setFormData((f) => ({ ...f, [name]: value }));
+  function handleChange(event) {
+    const { name, value } = event.target;
+    setFormData((current) => ({ ...current, [name]: value }));
   }
 
   function handleEdit(item) {
@@ -91,6 +106,7 @@ function Inventory() {
     try {
       setLoading(true);
       const form = new FormData();
+
       Object.entries(formData).forEach(([key, value]) => {
         if (value !== null && value !== "") {
           form.append(key, value);
@@ -114,7 +130,9 @@ function Inventory() {
   }
 
   async function handleDelete(id) {
-    if (!window.confirm("Delete this item?")) return;
+    if (!window.confirm("Delete this item?")) {
+      return;
+    }
 
     try {
       setLoading(true);
@@ -129,86 +147,74 @@ function Inventory() {
 
   const filteredItems = useMemo(() => {
     const value = search.toLowerCase();
-    return items.filter((item) => {
-      return (
-        item.name?.toLowerCase().includes(value) ||
-        item.category?.toLowerCase().includes(value) ||
-        item.supplier?.toLowerCase().includes(value)
-      );
-    });
+
+    return items.filter((item) => (
+      item.name?.toLowerCase().includes(value) ||
+      item.category?.toLowerCase().includes(value) ||
+      item.supplier?.toLowerCase().includes(value)
+    ));
   }, [items, search]);
 
   const heroStats = useMemo(
     () => [
-      { label: "Items cataloged", value: items.length },
-      { label: "Low stock items", value: items.filter(i => (i.current_quantity || 0) <= (i.reorder_level || 0)).length },
-      { label: "Total categories", value: categories.length }
+      { label: "Total Items", value: items.length },
+      {
+        label: "Low Stock",
+        value: items.filter(
+          (item) => Number(item.current_quantity || 0) <= Number(item.reorder_level || 0)
+        ).length
+      },
+      { label: "Categories", value: categories.length }
     ],
     [items, categories]
   );
 
-  const overviewStats = useMemo(() => {
-    const lowStockCount = filteredItems.filter(
-      (item) => Number(item.current_quantity || 0) <= Number(item.reorder_level || 0)
-    ).length;
-
-    return [
-      { label: "Visible items", value: filteredItems.length },
-      { label: "Healthy stock", value: Math.max(filteredItems.length - lowStockCount, 0) },
-      { label: "Low stock", value: lowStockCount }
-    ];
-  }, [filteredItems]);
-
   return (
     <DashboardLayout>
       <div className="inventory-container">
-        {/* TOP SECTION: Page Title & Add Button */}
         <div className="inventory-top-bar">
-          <div>
+          <div className="inventory-top-bar__copy">
             <h1 className="inventory-page-title">Inventory</h1>
             <p className="inventory-page-subtitle">Manage stock levels and item details</p>
           </div>
+
           <button
             type="button"
             className="inventory-add-btn"
             onClick={() => {
-              if (showForm && formData.id) setFormData(emptyForm);
-              setShowForm((prev) => !prev);
+              if (showForm && formData.id) {
+                setFormData(emptyForm);
+              }
+              setShowForm((current) => !current);
             }}
             title="Add new item"
           >
-            + Add Item
+            <span className="inventory-add-btn__icon" aria-hidden="true">
+              +
+            </span>
+            <span>Add Item</span>
           </button>
         </div>
 
-        {/* Error Alert */}
-        {error && (
+        {error ? (
           <div className="dashboard-card__alert dashboard-card__alert--error">
             <span>{error}</span>
-            <button onClick={() => setError("")} className="alert-close">×</button>
+            <button onClick={() => setError("")} className="alert-close">
+              x
+            </button>
           </div>
-        )}
+        ) : null}
 
-        {/* MIDDLE SECTION: Store Summary Card (Compact) */}
-        <div className="inventory-store-card">
-          <div className="store-card-header">
-            <div>
-              <h3 className="store-card-title">Store Summary</h3>
-              <p className="store-card-subtitle">Current inventory status</p>
-            </div>
-          </div>
-          <div className="store-card-stats">
-            {heroStats.map((stat) => (
-              <div key={stat.label} className="store-stat">
-                <span className="store-stat-label">{stat.label}</span>
-                <strong className="store-stat-value">{stat.value}</strong>
-              </div>
-            ))}
-          </div>
-        </div>
+        <section className="inventory-summary-strip" aria-label="Inventory summary">
+          {heroStats.map((stat) => (
+            <article key={stat.label} className="inventory-summary-card">
+              <span className="inventory-summary-card__label">{stat.label}</span>
+              <strong className="inventory-summary-card__value">{stat.value}</strong>
+            </article>
+          ))}
+        </section>
 
-        {/* Add Item Form Section */}
-        {showForm && (
+        {showForm ? (
           <section className="inventory-form-section">
             <div className="form-header">
               <div>
@@ -222,7 +228,7 @@ function Inventory() {
                   setShowForm(false);
                 }}
               >
-                ✕
+                x
               </button>
             </div>
 
@@ -317,7 +323,10 @@ function Inventory() {
                           type="file"
                           className="inventory-input inventory-input--file"
                           onChange={(event) =>
-                            setFormData((prev) => ({ ...prev, image: event.target.files?.[0] || null }))
+                            setFormData((current) => ({
+                              ...current,
+                              image: event.target.files?.[0] || null
+                            }))
                           }
                         />
                       </div>
@@ -363,15 +372,15 @@ function Inventory() {
               </div>
             </div>
           </section>
-        )}
+        ) : null}
 
-        {/* BOTTOM SECTION: Items Table/Cards */}
         <section className="inventory-items-section">
           <div className="items-header">
             <div>
               <h3 className="items-title">All Items</h3>
               <p className="items-subtitle">{filteredItems.length} items</p>
             </div>
+
             <div className="search-wrapper">
               <input
                 className="inventory-search"
@@ -379,157 +388,93 @@ function Inventory() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
-              {search && (
-                <button className="search-clear" onClick={() => setSearch("")}>×</button>
-              )}
+              {search ? (
+                <button className="search-clear" onClick={() => setSearch("")}>
+                  x
+                </button>
+              ) : null}
             </div>
           </div>
 
-          <div className="inventory-panel__summary inventory-filter-stats" aria-label="Store overview summary">
-            {overviewStats.map((stat) => (
-              <article key={stat.label} className="inventory-panel__summary-card">
-                <span>{stat.label}</span>
-                <strong>{stat.value}</strong>
-              </article>
-            ))}
-          </div>
-
-          {/* Desktop Table */}
-          <div className="inventory-table-wrapper">
-            <table className="inventory-table">
-              <caption className="inventory-table__caption">
-                Active inventory items with stock level, reorder point, and supplier details.
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col" className="inventory-table__serial">#</th>
-                  <th scope="col">Item Identity</th>
-                  <th scope="col">Category</th>
-                  <th scope="col">Supplier</th>
-                  <th scope="col">Unit</th>
-                  <th scope="col" className="text-right">Available Qty</th>
-                  <th scope="col" className="text-right">Reorder Level</th>
-                  <th scope="col" className="text-center">Status</th>
-                  <th scope="col" className="text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredItems.length > 0 ? (
-                  filteredItems.map((item, index) => {
-                    const isLowStock = (item.current_quantity || 0) <= (item.reorder_level || 0);
-                    return (
-                      <tr key={item.id} className={isLowStock ? "row-warning" : ""}>
-                        <td className="inventory-table__serial">{index + 1}</td>
-                        <td className="inventory-table__item-cell">
-                          <ItemIdentity name={item.name} imagePath={item.image_url} compact />
-                        </td>
-                        <td>
-                          <span className="badge-chip badge-chip--outline">{item.category || "Uncategorized"}</span>
-                        </td>
-                        <td>{item.supplier || "Not assigned"}</td>
-                        <td>{item.unit || "-"}</td>
-                        <td className="text-right">
-                          <div className="inventory-table__metric">
-                            <strong>{item.current_quantity ?? 0}</strong>
-                          </div>
-                        </td>
-                        <td className="text-right">
-                          <div className="inventory-table__metric">
-                            <strong>{item.reorder_level ?? "-"}</strong>
-                          </div>
-                        </td>
-                        <td className="text-center">
-                          {isLowStock ? (
-                            <span className="status-chip status-chip--rejected">Low Stock</span>
-                          ) : (
-                            <span className="status-chip status-chip--fulfilled">Healthy</span>
-                          )}
-                        </td>
-                        <td className="inventory-table__actions">
-                          <button 
-                            className="action-btn action-btn--edit" 
-                            onClick={() => handleEdit(item)} 
-                            disabled={loading}
-                            title="Edit Item"
-                          >
-                            Edit
-                          </button>
-                          <button 
-                            className="action-btn action-btn--delete" 
-                            onClick={() => handleDelete(item.id)} 
-                            disabled={loading}
-                            title="Delete Item"
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan="9" className="inventory-table__empty">
-                      No items found matching your search.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile Card View */}
-          <div className="inventory-mobile-list">
+          <div className="inventory-item-list">
             {filteredItems.length > 0 ? (
               filteredItems.map((item) => {
-                const isLowStock = (item.current_quantity || 0) <= (item.reorder_level || 0);
+                const health = getInventoryHealth(item);
+
                 return (
-                  <article key={item.id} className={`inventory-mobile-card ${isLowStock ? "inventory-mobile-card--warning" : ""}`}>
-                    <div className="inventory-mobile-card__head">
-                      <ItemIdentity name={item.name} imagePath={item.image_url} compact />
-                      <div className="inventory-mobile-card__title-group">
-                        <span className="badge-chip badge-chip--xsmall">{item.category}</span>
-                        <p className="text-muted small">{item.supplier}</p>
+                  <article key={item.id} className="inventory-row-card">
+                    <div className="inventory-row-card__left">
+                      <div className="inventory-row-card__identity">
+                        <ItemIdentity name={item.name} imagePath={item.image_url} compact />
+                        <span className="inventory-row-card__category">
+                          {item.category || "Uncategorized"}
+                        </span>
                       </div>
                     </div>
-                    <div className="inventory-mobile-card__meta">
-                      <div className="meta-item">
-                        <small>STOCK</small>
-                        <strong>{item.current_quantity ?? 0} {item.unit}</strong>
+
+                    <div className="inventory-row-card__center">
+                      <div className="inventory-row-card__meta">
+                        <span>Supplier</span>
+                        <strong>{item.supplier || "Not assigned"}</strong>
                       </div>
-                      <div className="meta-item">
-                        <small>REORDER</small>
+                      <div className="inventory-row-card__meta">
+                        <span>Unit</span>
+                        <strong>{item.unit || "-"}</strong>
+                      </div>
+                      <div className="inventory-row-card__meta">
+                        <span>Quantity</span>
+                        <strong>{item.current_quantity ?? 0}</strong>
+                      </div>
+                      <div className="inventory-row-card__meta">
+                        <span>Reorder Level</span>
                         <strong>{item.reorder_level ?? "-"}</strong>
                       </div>
-                      <div className="meta-item text-right">
-                        <small>STATUS</small>
-                        <span className={`status-dot ${isLowStock ? "status-dot--red" : "status-dot--green"}`}></span>
-                      </div>
                     </div>
-                    <div className="inventory-mobile-card__actions">
-                      <button className="secondary-button secondary-button--small" onClick={() => handleEdit(item)} disabled={loading}>
-                        Edit
-                      </button>
-                      <button className="secondary-button secondary-button--small secondary-button--danger" onClick={() => handleDelete(item.id)} disabled={loading}>
-                        Delete
-                      </button>
+
+                    <div className="inventory-row-card__right">
+                      <span
+                        className={`inventory-health-badge inventory-health-badge--${health.tone}`}
+                      >
+                        {health.label}
+                      </span>
+
+                      <div className="inventory-row-card__actions">
+                        <button
+                          className="action-btn action-btn--edit"
+                          onClick={() => handleEdit(item)}
+                          disabled={loading}
+                          title="Edit Item"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="action-btn action-btn--delete"
+                          onClick={() => handleDelete(item.id)}
+                          disabled={loading}
+                          title="Delete Item"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   </article>
                 );
               })
             ) : (
-              <div className="inventory-empty-state">
+              <div className="inventory-empty-state inventory-empty-state--panel">
                 <p>No items found matching your search.</p>
               </div>
             )}
           </div>
         </section>
 
-        {/* Floating Add Button (Mobile) */}
         <button
           className="inventory-fab-btn"
           onClick={() => {
-            if (showForm && formData.id) setFormData(emptyForm);
-            setShowForm((prev) => !prev);
+            if (showForm && formData.id) {
+              setFormData(emptyForm);
+            }
+            setShowForm((current) => !current);
           }}
           title="Add new item"
         >

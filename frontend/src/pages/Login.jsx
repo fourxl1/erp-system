@@ -11,9 +11,13 @@ function Login() {
   });
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   function handleChange(event) {
     const { name, value } = event.target;
+    if (error) {
+      setError("");
+    }
     setFormData({ ...formData, [name]: value });
   }
 
@@ -21,7 +25,7 @@ function Login() {
     event.preventDefault();
 
     if (!formData.email.trim() || !formData.password) {
-      setError("Email and password are required");
+      setError("Username and password are required");
       return;
     }
 
@@ -48,75 +52,76 @@ function Login() {
 
   return (
     <div className="login-screen">
-      <div className="login-screen__backdrop" />
+      <section className="login-card" aria-labelledby="login-title">
+        <BrandMark centered minimal />
 
-      <section className="login-screen__brand-panel">
-        <div className="login-screen__badge">LATEX FOAM STORE</div>
-        <BrandMark centered />
-
-        <p className="login-screen__summary">
-          Production inventory, stock movement, and warehouse visibility for the
-          LATEX FOAM Store.
-        </p>
-
-        <div className="login-screen__highlights">
-          <div className="login-screen__highlight">
-            <strong>Stock Management Ready</strong>
-            <span>Track stock levels, movement history, and low-stock risk.</span>
-          </div>
-
-          <div className="login-screen__highlight">
-            <strong>Operations Focused</strong>
-            <span>Designed for procurement, storekeeping, and production flow.</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="login-card">
         <div className="login-card__header">
-          <span className="login-card__eyebrow">Secure Access</span>
-          <h1>Sign in to your account</h1>
-          <p>Enter your login details.</p>
+          <h1 id="login-title">Sign in</h1>
+          <p>Use your account credentials to access the ERP system.</p>
         </div>
 
-        <form className="login-card__form" onSubmit={handleSubmit}>
+        <form className="login-card__form" onSubmit={handleSubmit} noValidate>
           <label className="field">
-            <span>Email</span>
+            <span>Username</span>
             <input
-              type="email"
+              type="text"
               name="email"
-              placeholder="storekeeper@latexfoam.com"
+              placeholder="Enter your email"
               value={formData.email}
               onChange={handleChange}
+              autoComplete="username"
+              inputMode="email"
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? "login-error" : undefined}
             />
           </label>
 
           <label className="field">
             <span>Password</span>
-            <input
-              type="password"
-              name="password"
-              placeholder="Enter your password"
-              value={formData.password}
-              onChange={handleChange}
-            />
+            <div className="login-card__password-field">
+              <input
+                type={showPassword ? "text" : "password"}
+                name="password"
+                placeholder="Enter your password"
+                value={formData.password}
+                onChange={handleChange}
+                autoComplete="current-password"
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? "login-error" : undefined}
+              />
+
+              <button
+                type="button"
+                className="login-card__password-toggle"
+                onClick={() => setShowPassword((current) => !current)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </label>
+
+          {error ? (
+            <p className="form-error" id="login-error" role="alert">
+              {error}
+            </p>
+          ) : null}
 
           <button
             type="submit"
-            className="primary-button"
+            className="login-card__submit"
             disabled={isSubmitting}
+            aria-busy={isSubmitting}
           >
-            {isSubmitting ? "Signing In..." : "Enter Dashboard"}
+            <span
+              className={`login-card__submit-spinner${
+                isSubmitting ? " login-card__submit-spinner--visible" : ""
+              }`}
+              aria-hidden="true"
+            />
+            <span>{isSubmitting ? "Signing in..." : "Log in"}</span>
           </button>
-
-          {error ? <p className="form-error">{error}</p> : null}
         </form>
-
-        <div className="login-card__footer">
-          <span>Copyright 2026 Four XL. All rights reserved.</span>
-          <span>Inventory and maintenance operations</span>
-        </div>
       </section>
     </div>
   );

@@ -171,7 +171,9 @@ async function getAllItems(filters = {}) {
         i.unit,
         i.reorder_level,
         COALESCE(i.image_path, '') AS image_path,
+        c.id AS category_id,
         c.name AS category,
+        s.id AS supplier_id,
         s.name AS supplier,
         COALESCE(SUM(b.quantity), 0) AS current_quantity,
         i.created_at,
@@ -181,7 +183,7 @@ async function getAllItems(filters = {}) {
       LEFT JOIN suppliers s ON s.id = i.supplier_id
       ${locationJoin}
       ${whereClause}
-      GROUP BY i.id, c.name, s.name
+      GROUP BY i.id, c.id, c.name, s.id, s.name
       ORDER BY i.name
     `,
     values

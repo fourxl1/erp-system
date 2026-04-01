@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import DashboardLayout from "../layouts/DashboardLayout";
 import {
   createAsset,
@@ -38,6 +39,7 @@ function MasterData() {
   const isSuperAdmin = currentRole === "superadmin";
   const canManageUsers = currentRole === "admin" || currentRole === "superadmin";
   const userRoleOptions = isSuperAdmin ? SUPERADMIN_USER_ROLE_OPTIONS : ADMIN_USER_ROLE_OPTIONS;
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
@@ -172,10 +174,18 @@ function MasterData() {
   );
 
   useEffect(() => {
-    if (!availableTabs.includes(activeTab)) {
-      setActiveTab(availableTabs[0]);
+    const requestedTab = searchParams.get("tab");
+    const nextTab = availableTabs.includes(requestedTab) ? requestedTab : availableTabs[0];
+
+    if (requestedTab !== nextTab) {
+      setSearchParams({ tab: nextTab }, { replace: true });
+      return;
     }
-  }, [activeTab, availableTabs]);
+
+    if (activeTab !== nextTab) {
+      setActiveTab(nextTab);
+    }
+  }, [activeTab, availableTabs, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!userForm.id) {
@@ -292,7 +302,7 @@ function MasterData() {
     <button
       key={tab}
       className={`tab-button ${activeTab === tab ? "active" : ""}`}
-      onClick={() => setActiveTab(tab)}
+      onClick={() => setSearchParams({ tab }, { replace: true })}
     >
       {tab.charAt(0).toUpperCase() + tab.slice(1)}
     </button>

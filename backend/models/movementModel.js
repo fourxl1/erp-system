@@ -399,7 +399,7 @@ async function listMovements(filters = {}) {
         recipient.name AS recipient,
         u.full_name AS entered_by
       FROM stock_movements sm
-      JOIN items i ON i.id = sm.item_id
+      JOIN items i ON i.id = sm.item_id AND i.is_active = TRUE
       JOIN locations l ON l.id = sm.location_id
       LEFT JOIN store_sections ss ON ss.id = sm.section_id
       LEFT JOIN assets a ON a.id = sm.asset_id
@@ -468,7 +468,7 @@ async function listDailyMovements(filters = {}) {
         u.full_name AS entered_by,
         sm.created_at AS timestamp
       FROM stock_movements sm
-      JOIN items i ON i.id = sm.item_id
+      JOIN items i ON i.id = sm.item_id AND i.is_active = TRUE
       JOIN locations l ON l.id = sm.location_id
       LEFT JOIN store_sections ss ON ss.id = sm.section_id
       LEFT JOIN assets a ON a.id = sm.asset_id
