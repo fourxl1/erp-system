@@ -151,7 +151,7 @@ function Maintenance() {
       description: entry.description || "",
       reference: ""
     });
-    document.querySelector(".app-shell__content")?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleDelete(id) {

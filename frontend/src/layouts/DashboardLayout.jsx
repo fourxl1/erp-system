@@ -269,6 +269,7 @@ function DashboardLayout({ children }) {
     getDismissedRequestNotificationKeys(currentUser.id)
   );
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
   const [showNotificationCenter, setShowNotificationCenter] = useState(false);
 
@@ -379,6 +380,19 @@ function DashboardLayout({ children }) {
     setShowNotificationCenter(false);
     setIsSidebarOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    function handleWindowScroll() {
+      setShowBackToTop(window.scrollY > 280);
+    }
+
+    handleWindowScroll();
+    window.addEventListener("scroll", handleWindowScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", handleWindowScroll);
+    };
+  }, []);
 
   const requestNotifications = useMemo(
     () => buildRequestNotifications(requests, currentUser.id, dismissedKeys),
@@ -677,6 +691,16 @@ function DashboardLayout({ children }) {
           {children}
         </section>
       </main>
+
+      <button
+        type="button"
+        className={`back-to-top ${showBackToTop ? "back-to-top--visible" : ""}`}
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        aria-label="Back to top"
+      >
+        <span aria-hidden="true">^</span>
+        <span>Top</span>
+      </button>
 
       {showContactModal ? (
         <div className="modal-overlay" onClick={() => setShowContactModal(false)}>

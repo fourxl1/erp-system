@@ -521,7 +521,6 @@ function Reports() {
                   <th className="text-center">Activity</th>
                   <th className="text-right">Quantity</th>
                   <th>Unit</th>
-                  <th className="text-right">Cost</th>
                   <th>Metadata</th>
                   <th>Responsible</th>
                 </tr>
@@ -587,10 +586,6 @@ function Reports() {
                           </span>
                         </td>
                         <td>{movement.item_unit || "-"}</td>
-                        <td className="text-right">
-                          <div>${Number(movement.unit_cost || 0).toFixed(2)}</div>
-                          <strong>${Number(movement.total_cost || 0).toFixed(2)}</strong>
-                        </td>
                         <td>
                           <div className="reports-page__meta-primary">
                             {movement.asset || "No Asset"}
@@ -615,7 +610,7 @@ function Reports() {
                   })
                 ) : (
                   <tr>
-                    <td colSpan="8" className="empty-state">
+                    <td colSpan="7" className="empty-state">
                       No movement data found matching selected criteria.
                     </td>
                   </tr>

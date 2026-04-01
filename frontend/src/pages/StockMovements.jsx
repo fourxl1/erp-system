@@ -325,7 +325,7 @@ function StockMovements() {
       reference: movement.reference || "",
       created_at: toDateTimeInputValue(movement.timestamp || movement.created_at)
     });
-    document.querySelector(".app-shell__content")?.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleDeleteMovement(id) {

@@ -40,7 +40,7 @@ const exportMovementReportCsv = asyncHandler(async (req, res) => {
   const csv = await reportService.exportMovementReportCsv(getReportFilters(req), req.user);
 
   res.header("Content-Type", "text/csv");
-  res.attachment("item-movement-report.csv");
+  res.attachment(req.query.item_id ? "item-movement-report.csv" : "movement-history-report.csv");
   return res.send(csv);
 });
 
@@ -51,7 +51,7 @@ const exportMovementReportExcel = asyncHandler(async (req, res) => {
     "Content-Type",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   );
-  res.attachment("item-movement-report.xlsx");
+  res.attachment(req.query.item_id ? "item-movement-report.xlsx" : "movement-history-report.xlsx");
   return res.send(Buffer.from(workbook));
 });
 

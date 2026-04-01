@@ -53,12 +53,12 @@ async function getMovementReport(filters, user) {
 
   if (scopedFilters.startDate) {
     values.push(scopedFilters.startDate);
-    conditions.push(`sm.created_at >= $${values.length}`);
+    conditions.push(`sm.created_at >= $${values.length}::date`);
   }
 
   if (scopedFilters.endDate) {
     values.push(scopedFilters.endDate);
-    conditions.push(`sm.created_at <= $${values.length}`);
+    conditions.push(`sm.created_at < ($${values.length}::date + INTERVAL '1 day')`);
   }
 
   const movementResult = await query(
@@ -80,6 +80,7 @@ async function getMovementReport(filters, user) {
         i.id AS item_id,
         i.name AS item_name,
         i.unit AS item_unit,
+        i.reorder_level,
         i.description AS item_description,
         i.image_path AS item_image,
         c.name AS category
@@ -100,6 +101,7 @@ async function getMovementReport(filters, user) {
   );
 
   let currentStock = null;
+  let scopedItem = null;
 
   if (scopedFilters.itemId) {
     const balanceValues = [scopedFilters.itemId];
@@ -120,27 +122,51 @@ async function getMovementReport(filters, user) {
     );
 
     currentStock = Number(stockResult.rows[0]?.current_stock || 0);
+
+    const itemResult = await query(
+      `
+        SELECT
+          i.id,
+          i.name,
+          i.unit,
+          i.reorder_level,
+          i.description,
+          i.image_path,
+          c.name AS category
+        FROM items i
+        LEFT JOIN categories c ON c.id = i.category_id
+        WHERE i.id = $1
+          AND i.is_active = TRUE
+        LIMIT 1
+      `,
+      [scopedFilters.itemId]
+    );
+
+    const itemRow = itemResult.rows[0];
+
+    if (itemRow) {
+      scopedItem = {
+        itemId: itemRow.id,
+        itemName: itemRow.name,
+        unit: itemRow.unit,
+        reorderLevel: Number(itemRow.reorder_level || 0),
+        itemDescription: itemRow.description,
+        category: itemRow.category,
+        itemImage: itemRow.image_path,
+        currentStock
+      };
+    }
   }
 
   return {
     header: {
       companyName: "Latex Foam Store",
-      reportTitle: "Item Movement Report",
+      reportTitle: scopedFilters.itemId ? "Item Movement Report" : "Movement History Report",
       fromDate: scopedFilters.startDate || null,
       toDate: scopedFilters.endDate || null,
       generatedAt: new Date().toISOString()
     },
-    item: movementResult.rows[0]
-      ? {
-          itemId: movementResult.rows[0].item_id,
-          itemName: movementResult.rows[0].item_name,
-          unit: movementResult.rows[0].item_unit,
-          itemDescription: movementResult.rows[0].item_description,
-          category: movementResult.rows[0].category,
-          itemImage: movementResult.rows[0].item_image,
-          currentStock
-        }
-      : null,
+    item: scopedItem,
     movements: movementResult.rows.map((row) => ({
       ...row,
       movement_type: toPublicMovementType(row.movement_type),
@@ -306,36 +332,7 @@ function getActivityChipTheme(type) {
 }
 
 function deriveScopedItem(report) {
-  if (report.item) {
-    return report.item;
-  }
-
-  if (!Array.isArray(report.movements) || report.movements.length === 0) {
-    return null;
-  }
-
-  const uniqueKeys = [
-    ...new Set(
-      report.movements
-        .map((row) => row.item_id || row.item_name)
-        .filter(Boolean)
-    )
-  ];
-
-  if (uniqueKeys.length !== 1) {
-    return null;
-  }
-
-  const row = report.movements[0];
-  return {
-    itemId: row.item_id,
-    itemName: row.item_name,
-    unit: row.item_unit,
-    itemDescription: row.item_description,
-    category: row.category,
-    itemImage: row.item_image,
-    currentStock: null
-  };
+  return report.item || null;
 }
 
 function drawLogoBadge(doc, x, y, size) {
@@ -390,64 +387,65 @@ function drawItemDetail(doc, { x, y, label, value, width }) {
 }
 
 function drawItemSection(doc, { item, imagePath, x, y, width }) {
-  const sectionHeight = 140;
-  const innerPadding = 16;
-  const rightBoxWidth = 132;
-  const gap = 18;
+  const sectionHeight = 96;
+  const innerPadding = 14;
+  const rightBoxWidth = 112;
+  const gap = 16;
   const leftWidth = width - rightBoxWidth - gap - innerPadding * 2;
   const leftX = x + innerPadding;
   const topY = y + innerPadding;
   const imageBoxX = x + width - innerPadding - rightBoxWidth;
-  const imageBoxY = y + 14;
-  const imageInnerX = imageBoxX + 14;
-  const imageInnerY = imageBoxY + 14;
-  const imageInnerSize = Math.min(rightBoxWidth - 28, 120);
-  const description = normalizeDisplayText(item?.itemDescription, "No description provided.");
-  const descriptionPreview =
-    description.length > 96 ? `${description.slice(0, 93).trimEnd()}...` : description;
+  const imageBoxY = y + 12;
+  const imageInnerX = imageBoxX + 10;
+  const imageInnerY = imageBoxY + 10;
+  const imageInnerSize = Math.min(rightBoxWidth - 20, 78);
+  const itemName = normalizeDisplayText(item?.itemName, "All Items");
+  const categoryUnitParts = [normalizeDisplayText(item?.category, null), normalizeDisplayText(item?.unit, null)].filter(Boolean);
+  const stockLabel =
+    item?.currentStock !== null && item?.currentStock !== undefined
+      ? `${formatNumber(item.currentStock)} ${item.unit || ""}`.trim()
+      : "-";
+  const reorderLabel =
+    item?.reorderLevel !== null && item?.reorderLevel !== undefined
+      ? `${formatNumber(item.reorderLevel)} ${item.unit || ""}`.trim()
+      : "-";
 
   doc.save();
-  doc.roundedRect(x, y, width, sectionHeight, 20).fillAndStroke(REPORT_COLORS.white, REPORT_COLORS.border);
-  doc.font("Helvetica-Bold").fontSize(7).fillColor(REPORT_COLORS.muted).text("ITEM OVERVIEW", leftX, topY, {
+  doc.roundedRect(x, y, width, sectionHeight, 18).fillAndStroke(REPORT_COLORS.white, REPORT_COLORS.border);
+  doc.font("Helvetica-Bold").fontSize(6.6).fillColor(REPORT_COLORS.muted).text("ITEM OVERVIEW", leftX, topY, {
     width: leftWidth
   });
-  doc.font("Helvetica-Bold").fontSize(14).fillColor(REPORT_COLORS.ink).text(
-    normalizeDisplayText(item?.itemName, "Multiple items in scope"),
+  doc.font("Helvetica-Bold").fontSize(12).fillColor(REPORT_COLORS.ink).text(
+    itemName,
     leftX,
-    topY + 14,
+    topY + 12,
     { width: leftWidth }
   );
-  doc.font("Helvetica").fontSize(8.2).fillColor(REPORT_COLORS.muted).text(descriptionPreview, leftX, topY + 34, {
-    width: leftWidth
+  doc.font("Helvetica").fontSize(7.4).fillColor(REPORT_COLORS.muted).text(
+    categoryUnitParts.length > 0 ? categoryUnitParts.join(" | ") : "Current report scope",
+    leftX,
+    topY + 28,
+    { width: leftWidth }
+  );
+  doc.font("Helvetica-Bold").fontSize(7.1).fillColor(REPORT_COLORS.muted).text("STOCK", leftX, topY + 48, {
+    width: 60
+  });
+  doc.font("Helvetica").fontSize(8.2).fillColor(REPORT_COLORS.ink).text(stockLabel, leftX, topY + 58, {
+    width: leftWidth / 2
+  });
+  doc.font("Helvetica-Bold").fontSize(7.1).fillColor(REPORT_COLORS.muted).text(
+    "REORDER",
+    leftX + leftWidth / 2,
+    topY + 48,
+    {
+      width: 70
+    }
+  );
+  doc.font("Helvetica").fontSize(8.2).fillColor(REPORT_COLORS.ink).text(reorderLabel, leftX + leftWidth / 2, topY + 58, {
+    width: leftWidth / 2
   });
 
-  const detailY = topY + 72;
-  drawItemDetail(doc, {
-    x: leftX,
-    y: detailY,
-    label: "Category",
-    value: normalizeDisplayText(item?.category, "Uncategorized"),
-    width: leftWidth / 2 - 10
-  });
-  drawItemDetail(doc, {
-    x: leftX + leftWidth / 2 + 10,
-    y: detailY,
-    label: "Unit",
-    value: normalizeDisplayText(item?.unit),
-    width: leftWidth / 2 - 10
-  });
-  drawItemDetail(doc, {
-    x: leftX,
-    y: detailY + 38,
-    label: "Current Stock",
-    value:
-      item?.currentStock !== null && item?.currentStock !== undefined
-        ? `${formatNumber(item.currentStock)} ${item.unit || ""}`.trim()
-        : "-",
-    width: leftWidth
-  });
-
-  doc.roundedRect(imageBoxX, imageBoxY, rightBoxWidth, sectionHeight - 28, 16).fillAndStroke("#f8fafc", REPORT_COLORS.border);
+  doc.roundedRect(imageBoxX, imageBoxY, rightBoxWidth, sectionHeight - 24, 14).fillAndStroke("#f8fafc", REPORT_COLORS.border);
 
   if (imagePath) {
     try {
@@ -460,7 +458,7 @@ function drawItemSection(doc, { item, imagePath, x, y, width }) {
       doc.font("Helvetica-Bold").fontSize(20).fillColor(REPORT_COLORS.muted).text(
         getInitials(item?.itemName, "IT"),
         imageBoxX,
-        imageBoxY + 38,
+        imageBoxY + 26,
         {
           width: rightBoxWidth,
           align: "center"
@@ -471,7 +469,7 @@ function drawItemSection(doc, { item, imagePath, x, y, width }) {
     doc.font("Helvetica-Bold").fontSize(20).fillColor(REPORT_COLORS.muted).text(
       getInitials(item?.itemName, "IT"),
       imageBoxX,
-      imageBoxY + 38,
+      imageBoxY + 26,
       {
         width: rightBoxWidth,
         align: "center"
@@ -479,7 +477,7 @@ function drawItemSection(doc, { item, imagePath, x, y, width }) {
     );
   }
 
-  doc.font("Helvetica").fontSize(7.2).fillColor(REPORT_COLORS.muted).text("Item image", imageBoxX, imageBoxY + 100, {
+  doc.font("Helvetica").fontSize(6.8).fillColor(REPORT_COLORS.muted).text("Image", imageBoxX, imageBoxY + 66, {
     width: rightBoxWidth,
     align: "center"
   });
@@ -586,22 +584,6 @@ function drawMovementRow(doc, { row, index, x, y, width, columns }) {
       );
     }
 
-    if (column.key === "cost") {
-      doc.font("Helvetica-Bold").fontSize(7.8).fillColor(REPORT_COLORS.ink).text(formatCurrency(row.total_cost), cellX, y + 11, {
-        width: cellWidth,
-        align: "right"
-      });
-      doc.font("Helvetica").fontSize(6.6).fillColor(REPORT_COLORS.muted).text(
-        `${formatCurrency(row.unit_cost)} / unit`,
-        cellX,
-        y + 25,
-        {
-          width: cellWidth,
-          align: "right"
-        }
-      );
-    }
-
     if (column.key === "context") {
       const contextLines = [
         `Loc: ${normalizeDisplayText(row.location, "N/A")}`,
@@ -684,22 +666,24 @@ function renderMovementPdf(report, res) {
   const reportItem = deriveScopedItem(report);
   const reportImagePath = resolveLocalReportImagePath(reportItem?.itemImage);
   const totalQuantity = report.movements.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
-  const totalValue = report.movements.reduce((sum, row) => sum + Number(row.total_cost || 0), 0);
+  const itemsInScope = new Set(report.movements.map((row) => row.item_id).filter(Boolean)).size;
   const currentStockLabel =
     reportItem?.currentStock !== null && reportItem?.currentStock !== undefined
       ? `${formatNumber(reportItem.currentStock)} ${reportItem.unit || ""}`.trim()
       : "-";
   const columns = [
-    { key: "dateItem", label: "Date / Item", width: 112 },
-    { key: "activity", label: "Activity", width: 76, align: "center" },
-    { key: "quantity", label: "Quantity", width: 56, align: "right" },
-    { key: "cost", label: "Cost", width: 86, align: "right" },
-    { key: "context", label: "Context", width: 143 },
-    { key: "responsible", label: "Responsible", width: 58 }
+    { key: "dateItem", label: "Date / Item", width: 126 },
+    { key: "activity", label: "Activity", width: 70, align: "center" },
+    { key: "quantity", label: "Quantity", width: 62, align: "right" },
+    { key: "context", label: "Context", width: 193 },
+    { key: "responsible", label: "Responsible", width: 80 }
   ];
 
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", "attachment; filename=item-movement-report.pdf");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename=${reportItem ? "item-movement-report.pdf" : "movement-history-report.pdf"}`
+  );
 
   doc.pipe(res);
 
@@ -716,9 +700,14 @@ function renderMovementPdf(report, res) {
   doc.font("Helvetica-Bold").fontSize(18).fillColor(REPORT_COLORS.ink).text("Latex Foam Store", headerTextX, 30, {
     width: headerTextWidth
   });
-  doc.font("Helvetica-Bold").fontSize(11).fillColor(REPORT_COLORS.ink).text("Item Report", headerTextX, 52, {
-    width: headerTextWidth
-  });
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(REPORT_COLORS.ink).text(
+    report.header?.reportTitle || "Movement History Report",
+    headerTextX,
+    52,
+    {
+      width: headerTextWidth
+    }
+  );
   doc.font("Helvetica").fontSize(7.8).fillColor(REPORT_COLORS.muted).text(
     `Generated: ${formatDisplayDateTime(generatedAt)}`,
     headerTextX,
@@ -738,34 +727,34 @@ function renderMovementPdf(report, res) {
     x: margin,
     y: summaryY,
     width: metricWidth,
-    height: 50,
+    height: 46,
     label: "Total Quantity",
     value: formatNumber(totalQuantity),
     background: REPORT_COLORS.softBlue,
-    valueFontSize: 11.5
+    valueFontSize: 10.8
   });
   drawMetricCard(doc, {
     x: margin + metricWidth + summaryGap,
     y: summaryY,
     width: metricWidth,
-    height: 50,
-    label: "Current Stock",
-    value: currentStockLabel,
+    height: 46,
+    label: reportItem ? "Current Stock" : "Items in Scope",
+    value: reportItem ? currentStockLabel : formatNumber(itemsInScope),
     background: REPORT_COLORS.softSlate,
-    valueFontSize: 11.5
+    valueFontSize: 10.8
   });
   drawMetricCard(doc, {
     x: margin + (metricWidth + summaryGap) * 2,
     y: summaryY,
     width: metricWidth,
-    height: 50,
-    label: "Movement Value",
-    value: formatCurrency(totalValue),
+    height: 46,
+    label: "Entries",
+    value: formatNumber(report.movements.length),
     background: REPORT_COLORS.softSlate,
     valueFontSize: 10.8
   });
 
-  let cursorY = summaryY + 66;
+  let cursorY = summaryY + 58;
   cursorY += drawItemSection(doc, {
     item: reportItem,
     imagePath: reportImagePath,
@@ -779,7 +768,7 @@ function renderMovementPdf(report, res) {
     width: contentWidth / 2
   });
   doc.font("Helvetica").fontSize(7.8).fillColor(REPORT_COLORS.muted).text(
-    "Detailed transaction log with quantity, cost, and movement context",
+    "Detailed transaction log with quantity and movement context",
     margin,
     cursorY + 15,
     { width: contentWidth * 0.62 }
@@ -1065,11 +1054,10 @@ async function exportMovementReportCsv(filters, user) {
   const parser = new Parser({
     fields: [
       { label: "Date", value: "date" },
+      { label: "Item", value: "item_name" },
       { label: "Movement Type", value: "movement_type" },
       { label: "Quantity", value: "quantity" },
       { label: "Unit", value: "item_unit" },
-      { label: "Unit Cost", value: "unit_cost" },
-      { label: "Total Cost", value: "total_cost" },
       { label: "Machine/Asset", value: "asset" },
       { label: "Supplier", value: "supplier" },
       { label: "Recipient", value: "recipient" },
@@ -1094,8 +1082,6 @@ async function exportMovementReportExcel(filters, user) {
     { header: "Movement Type", key: "movement_type", width: 18 },
     { header: "Quantity", key: "quantity", width: 14 },
     { header: "Unit", key: "item_unit", width: 12 },
-    { header: "Unit Cost", key: "unit_cost", width: 14 },
-    { header: "Total Cost", key: "total_cost", width: 16 },
     { header: "Location", key: "location", width: 22 },
     { header: "Section", key: "section", width: 18 },
     { header: "Reference", key: "reference", width: 24 },
