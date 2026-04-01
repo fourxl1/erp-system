@@ -11,5 +11,8 @@ router.get("/movements/pdf", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADM
 router.get("/movements/csv", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportMovementReportCsv);
 router.get("/movements/excel", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportMovementReportExcel);
 router.get("/inventory-value", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.getInventoryValueReport);
+router.get("/inventory-value/pdf", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportInventoryValueReportPdf);
+router.get("/inventory-value/csv", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportInventoryValueReportCsv);
+router.get("/inventory-value/excel", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.reportQuery), reportController.exportInventoryValueReportExcel);
 
 module.exports = router;

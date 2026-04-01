@@ -338,6 +338,18 @@ export const fetchMaintenanceHistory = (params = {}) =>
 export const fetchMaintenanceItems = (id) =>
   request(`/maintenance/${id}/items`);
 
+export const updateMaintenanceLog = (id, data) =>
+  request(`/maintenance/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
+
+export const deleteMaintenanceLog = (id) =>
+  request(`/maintenance/${id}`, {
+    method: "DELETE"
+  });
+
 export const createInventoryCount = (data) =>
   request("/system/counts", {
     method: "POST",
@@ -353,6 +365,15 @@ export const fetchMovementReport = (params = {}) =>
 
 export const fetchInventoryValueReport = (params = {}) =>
   request(`/reports/inventory-value${buildQuery(params)}`);
+
+export const downloadInventoryValueReportPdf = (params = {}) =>
+  downloadFile(`/reports/inventory-value/pdf${buildQuery(params)}`, "inventory-valuation-report.pdf");
+
+export const downloadInventoryValueReportCsv = (params = {}) =>
+  downloadFile(`/reports/inventory-value/csv${buildQuery(params)}`, "inventory-valuation-report.csv");
+
+export const downloadInventoryValueReportExcel = (params = {}) =>
+  downloadFile(`/reports/inventory-value/excel${buildQuery(params)}`, "inventory-valuation-report.xlsx");
 
 export const downloadMovementReportPdf = (params = {}) =>
   downloadFile(`/reports/movements/pdf${buildQuery(params)}`, "item-movement-report.pdf");

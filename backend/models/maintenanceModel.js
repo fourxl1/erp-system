@@ -1,5 +1,9 @@
 const { query } = require("../config/db");
 
+function getExecutor(client) {
+  return client || { query };
+}
+
 async function createMaintenanceLog(client, logData) {
   const result = await client.query(
     `
@@ -66,6 +70,8 @@ async function getMaintenanceHistory(filters = {}) {
     `
       SELECT
         ml.id AS maintenance_id,
+        ml.asset_id,
+        ml.location_id,
         ml.description,
         ml.created_at,
         a.name AS asset_name,
@@ -88,6 +94,8 @@ async function getMaintenanceItems(maintenanceId) {
     `
       SELECT
         miu.id,
+        miu.item_id,
+        miu.movement_id,
         miu.quantity,
         miu.unit_cost,
         i.name AS item_name,
@@ -103,12 +111,80 @@ async function getMaintenanceItems(maintenanceId) {
   return result.rows;
 }
 
-async function getMaintenanceLogById(maintenanceId) {
-  const result = await query(
+async function getMaintenanceUsageEntries(maintenanceId, options = {}) {
+  const executor = getExecutor(options.client);
+  const result = await executor.query(
+    `
+      SELECT
+        id,
+        maintenance_id,
+        movement_id,
+        item_id,
+        quantity,
+        unit_cost
+      FROM maintenance_items_used
+      WHERE maintenance_id = $1
+      ORDER BY id
+    `,
+    [maintenanceId]
+  );
+
+  return result.rows;
+}
+
+async function getMaintenanceLogById(maintenanceId, options = {}) {
+  const executor = getExecutor(options.client);
+  const lockingClause = options.forUpdate ? "FOR UPDATE" : "";
+
+  const result = await executor.query(
     `
       SELECT id, asset_id, location_id, performed_by
       FROM maintenance_logs
       WHERE id = $1
+      ${lockingClause}
+    `,
+    [maintenanceId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function updateMaintenanceLog(client, maintenanceId, payload) {
+  const result = await client.query(
+    `
+      UPDATE maintenance_logs
+      SET
+        asset_id = $1,
+        location_id = $2,
+        description = $3
+      WHERE id = $4
+      RETURNING *
+    `,
+    [payload.asset_id, payload.location_id, payload.description, maintenanceId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function deleteMaintenanceItemsUsed(client, maintenanceId) {
+  const result = await client.query(
+    `
+      DELETE FROM maintenance_items_used
+      WHERE maintenance_id = $1
+      RETURNING *
+    `,
+    [maintenanceId]
+  );
+
+  return result.rows;
+}
+
+async function deleteMaintenanceLog(client, maintenanceId) {
+  const result = await client.query(
+    `
+      DELETE FROM maintenance_logs
+      WHERE id = $1
+      RETURNING *
     `,
     [maintenanceId]
   );
@@ -121,5 +197,9 @@ module.exports = {
   addMaintenanceItemUsed,
   getMaintenanceHistory,
   getMaintenanceItems,
-  getMaintenanceLogById
+  getMaintenanceUsageEntries,
+  getMaintenanceLogById,
+  updateMaintenanceLog,
+  deleteMaintenanceItemsUsed,
+  deleteMaintenanceLog
 };

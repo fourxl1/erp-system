@@ -152,16 +152,16 @@ async function getMovementReport(filters, user) {
 }
 
 const REPORT_COLORS = {
-  header: "#123c84",
-  headerDark: "#0f2d63",
+  header: "#ffffff",
+  headerDark: "#f8fafc",
   accent: "#2563eb",
-  ink: "#0f172a",
-  muted: "#64748b",
+  ink: "#111827",
+  muted: "#6b7280",
   border: "#dbe3ef",
-  softBlue: "#eff6ff",
+  softBlue: "#f5f9ff",
   softSlate: "#f8fafc",
   white: "#ffffff",
-  rowAlt: "#f7fbff",
+  rowAlt: "#fbfdff",
   successBg: "#dcfce7",
   successText: "#166534",
   dangerBg: "#fee2e2",
@@ -340,74 +340,88 @@ function deriveScopedItem(report) {
 
 function drawLogoBadge(doc, x, y, size) {
   doc.save();
-  doc.roundedRect(x, y, size, size, 18).fill("#ffffff");
-  doc.roundedRect(x + 6, y + 6, size - 12, size - 12, 14).fill("#dbeafe");
-  doc.font("Helvetica-Bold").fontSize(18).fillColor(REPORT_COLORS.header).text("LF", x, y + 15, {
+  doc.roundedRect(x, y, size, size, 16).fillAndStroke("#ffffff", REPORT_COLORS.border);
+  doc.roundedRect(x + 6, y + 6, size - 12, size - 12, 12).fill("#eff6ff");
+  doc.font("Helvetica-Bold").fontSize(16).fillColor(REPORT_COLORS.ink).text("LF", x, y + 13, {
     width: size,
     align: "center"
   });
-  doc.font("Helvetica-Bold").fontSize(6).fillColor(REPORT_COLORS.accent).text("STORE", x, y + 36, {
+  doc.font("Helvetica").fontSize(5.5).fillColor(REPORT_COLORS.muted).text("STORE", x, y + 33, {
     width: size,
     align: "center"
   });
   doc.restore();
 }
 
-function drawMetricCard(doc, { x, y, width, height, label, value, background }) {
+function drawMetricCard(
+  doc,
+  {
+    x,
+    y,
+    width,
+    height,
+    label,
+    value,
+    background,
+    labelFontSize = 7.2,
+    valueFontSize = 13,
+    accentHeight = 3
+  }
+) {
   doc.save();
-  doc.roundedRect(x, y, width, height, 18).fillAndStroke(background, REPORT_COLORS.border);
-  doc.rect(x, y + height - 5, width, 5).fill(REPORT_COLORS.accent);
-  doc.font("Helvetica-Bold").fontSize(8).fillColor(REPORT_COLORS.muted).text(label.toUpperCase(), x + 16, y + 14, {
+  doc.roundedRect(x, y, width, height, 16).fillAndStroke(background, REPORT_COLORS.border);
+  doc.rect(x, y, width, accentHeight).fill(REPORT_COLORS.accent);
+  doc.font("Helvetica-Bold").fontSize(labelFontSize).fillColor(REPORT_COLORS.muted).text(label.toUpperCase(), x + 12, y + 11, {
     width: width - 32
   });
-  doc.font("Helvetica-Bold").fontSize(20).fillColor(REPORT_COLORS.ink).text(value, x + 16, y + 30, {
-    width: width - 32
+  doc.font("Helvetica-Bold").fontSize(valueFontSize).fillColor(REPORT_COLORS.ink).text(value, x + 12, y + 24, {
+    width: width - 24
   });
   doc.restore();
 }
 
 function drawItemDetail(doc, { x, y, label, value, width }) {
-  doc.font("Helvetica-Bold").fontSize(8).fillColor(REPORT_COLORS.accent).text(label.toUpperCase(), x, y, {
+  doc.font("Helvetica-Bold").fontSize(7).fillColor(REPORT_COLORS.muted).text(label.toUpperCase(), x, y, {
     width
   });
-  doc.font("Helvetica").fontSize(10).fillColor(REPORT_COLORS.ink).text(value, x, y + 11, {
+  doc.font("Helvetica").fontSize(8.8).fillColor(REPORT_COLORS.ink).text(value, x, y + 10, {
     width
   });
 }
 
 function drawItemSection(doc, { item, imagePath, x, y, width }) {
-  const sectionHeight = 156;
-  const innerPadding = 18;
-  const rightBoxWidth = 156;
-  const gap = 20;
+  const sectionHeight = 140;
+  const innerPadding = 16;
+  const rightBoxWidth = 132;
+  const gap = 18;
   const leftWidth = width - rightBoxWidth - gap - innerPadding * 2;
   const leftX = x + innerPadding;
   const topY = y + innerPadding;
   const imageBoxX = x + width - innerPadding - rightBoxWidth;
-  const imageBoxY = y + 16;
+  const imageBoxY = y + 14;
   const imageInnerX = imageBoxX + 14;
   const imageInnerY = imageBoxY + 14;
-  const imageInnerSize = rightBoxWidth - 28;
+  const imageInnerSize = Math.min(rightBoxWidth - 28, 120);
   const description = normalizeDisplayText(item?.itemDescription, "No description provided.");
   const descriptionPreview =
-    description.length > 110 ? `${description.slice(0, 107).trimEnd()}...` : description;
+    description.length > 96 ? `${description.slice(0, 93).trimEnd()}...` : description;
 
   doc.save();
-  doc.roundedRect(x, y, width, sectionHeight, 22).fillAndStroke(REPORT_COLORS.white, REPORT_COLORS.border);
-  doc.font("Helvetica-Bold").fontSize(8).fillColor(REPORT_COLORS.accent).text("ITEM OVERVIEW", leftX, topY, {
+  doc.roundedRect(x, y, width, sectionHeight, 20).fillAndStroke(REPORT_COLORS.white, REPORT_COLORS.border);
+  doc.font("Helvetica-Bold").fontSize(7).fillColor(REPORT_COLORS.muted).text("ITEM OVERVIEW", leftX, topY, {
     width: leftWidth
   });
-  doc.font("Helvetica-Bold").fontSize(18).fillColor(REPORT_COLORS.ink).text(
+  doc.font("Helvetica-Bold").fontSize(14).fillColor(REPORT_COLORS.ink).text(
     normalizeDisplayText(item?.itemName, "Multiple items in scope"),
     leftX,
-    topY + 16,
+    topY + 14,
     { width: leftWidth }
   );
-  doc.font("Helvetica").fontSize(9).fillColor(REPORT_COLORS.muted).text(descriptionPreview, leftX, topY + 44, {
+  doc.font("Helvetica").fontSize(8.2).fillColor(REPORT_COLORS.muted).text(descriptionPreview, leftX, topY + 34, {
     width: leftWidth
   });
 
-  const detailY = topY + 82;
+  const detailY = topY + 72;
   drawItemDetail(doc, {
     x: leftX,
     y: detailY,
@@ -433,7 +447,7 @@ function drawItemSection(doc, { item, imagePath, x, y, width }) {
     width: leftWidth
   });
 
-  doc.roundedRect(imageBoxX, imageBoxY, rightBoxWidth, sectionHeight - 32, 18).fillAndStroke("#f8fafc", REPORT_COLORS.border);
+  doc.roundedRect(imageBoxX, imageBoxY, rightBoxWidth, sectionHeight - 28, 16).fillAndStroke("#f8fafc", REPORT_COLORS.border);
 
   if (imagePath) {
     try {
@@ -443,10 +457,10 @@ function drawItemSection(doc, { item, imagePath, x, y, width }) {
         valign: "center"
       });
     } catch (error) {
-      doc.font("Helvetica-Bold").fontSize(24).fillColor(REPORT_COLORS.muted).text(
+      doc.font("Helvetica-Bold").fontSize(20).fillColor(REPORT_COLORS.muted).text(
         getInitials(item?.itemName, "IT"),
         imageBoxX,
-        imageBoxY + 44,
+        imageBoxY + 38,
         {
           width: rightBoxWidth,
           align: "center"
@@ -454,10 +468,10 @@ function drawItemSection(doc, { item, imagePath, x, y, width }) {
       );
     }
   } else {
-    doc.font("Helvetica-Bold").fontSize(24).fillColor(REPORT_COLORS.muted).text(
+    doc.font("Helvetica-Bold").fontSize(20).fillColor(REPORT_COLORS.muted).text(
       getInitials(item?.itemName, "IT"),
       imageBoxX,
-      imageBoxY + 44,
+      imageBoxY + 38,
       {
         width: rightBoxWidth,
         align: "center"
@@ -465,7 +479,7 @@ function drawItemSection(doc, { item, imagePath, x, y, width }) {
     );
   }
 
-  doc.font("Helvetica").fontSize(8).fillColor(REPORT_COLORS.muted).text("Item image", imageBoxX, imageBoxY + 112, {
+  doc.font("Helvetica").fontSize(7.2).fillColor(REPORT_COLORS.muted).text("Item image", imageBoxX, imageBoxY + 100, {
     width: rightBoxWidth,
     align: "center"
   });
@@ -474,13 +488,23 @@ function drawItemSection(doc, { item, imagePath, x, y, width }) {
   return sectionHeight;
 }
 
-function drawTableHeader(doc, { x, y, columns, width }) {
+function drawTableHeader(
+  doc,
+  {
+    x,
+    y,
+    columns,
+    width,
+    background = REPORT_COLORS.softSlate,
+    textColor = REPORT_COLORS.ink
+  }
+) {
   doc.save();
-  doc.roundedRect(x, y, width, 34, 14).fill(REPORT_COLORS.headerDark);
+  doc.roundedRect(x, y, width, 30, 12).fillAndStroke(background, REPORT_COLORS.border);
 
   let cursorX = x;
   columns.forEach((column) => {
-    doc.font("Helvetica-Bold").fontSize(8).fillColor(REPORT_COLORS.white).text(column.label, cursorX + 8, y + 12, {
+    doc.font("Helvetica-Bold").fontSize(7.2).fillColor(textColor).text(column.label, cursorX + 8, y + 10, {
       width: column.width - 16,
       align: column.align || "left"
     });
@@ -488,7 +512,7 @@ function drawTableHeader(doc, { x, y, columns, width }) {
   });
 
   doc.restore();
-  return y + 42;
+  return y + 36;
 }
 
 function drawActivityChip(doc, { label, type, x, y, width }) {
@@ -507,7 +531,7 @@ function drawActivityChip(doc, { label, type, x, y, width }) {
 }
 
 function drawMovementRow(doc, { row, index, x, y, width, columns }) {
-  const rowHeight = 76;
+  const rowHeight = 68;
   const background = index % 2 === 0 ? REPORT_COLORS.white : REPORT_COLORS.rowAlt;
   const signedQuantity = `${isOutgoingMovement(row) ? "-" : "+"}${formatNumber(row.quantity)}`;
   const activityLabel = formatMovementTypeLabel(row.movement_type);
@@ -525,13 +549,13 @@ function drawMovementRow(doc, { row, index, x, y, width, columns }) {
     const cellWidth = column.width - 16;
 
     if (column.key === "dateItem") {
-      doc.font("Helvetica").fontSize(7.2).fillColor(REPORT_COLORS.muted).text(formatDisplayDateTime(row.date), cellX, y + 10, {
+      doc.font("Helvetica").fontSize(6.6).fillColor(REPORT_COLORS.muted).text(formatDisplayDateTime(row.date), cellX, y + 9, {
         width: cellWidth
       });
-      doc.font("Helvetica-Bold").fontSize(8.4).fillColor(REPORT_COLORS.ink).text(
+      doc.font("Helvetica-Bold").fontSize(7.8).fillColor(REPORT_COLORS.ink).text(
         truncateText(doc, row.item_name, cellWidth, "Item"),
         cellX,
-        y + 25,
+        y + 22,
         { width: cellWidth }
       );
     }
@@ -547,14 +571,14 @@ function drawMovementRow(doc, { row, index, x, y, width, columns }) {
     }
 
     if (column.key === "quantity") {
-      doc.font("Helvetica-Bold").fontSize(9).fillColor(REPORT_COLORS.ink).text(signedQuantity, cellX, y + 14, {
+      doc.font("Helvetica-Bold").fontSize(8).fillColor(REPORT_COLORS.ink).text(signedQuantity, cellX, y + 12, {
         width: cellWidth,
         align: "right"
       });
-      doc.font("Helvetica").fontSize(7.4).fillColor(REPORT_COLORS.muted).text(
+      doc.font("Helvetica").fontSize(6.8).fillColor(REPORT_COLORS.muted).text(
         normalizeDisplayText(row.item_unit),
         cellX,
-        y + 31,
+        y + 27,
         {
           width: cellWidth,
           align: "right"
@@ -563,14 +587,14 @@ function drawMovementRow(doc, { row, index, x, y, width, columns }) {
     }
 
     if (column.key === "cost") {
-      doc.font("Helvetica-Bold").fontSize(8.6).fillColor(REPORT_COLORS.ink).text(formatCurrency(row.total_cost), cellX, y + 12, {
+      doc.font("Helvetica-Bold").fontSize(7.8).fillColor(REPORT_COLORS.ink).text(formatCurrency(row.total_cost), cellX, y + 11, {
         width: cellWidth,
         align: "right"
       });
-      doc.font("Helvetica").fontSize(7.2).fillColor(REPORT_COLORS.muted).text(
+      doc.font("Helvetica").fontSize(6.6).fillColor(REPORT_COLORS.muted).text(
         `${formatCurrency(row.unit_cost)} / unit`,
         cellX,
-        y + 29,
+        y + 25,
         {
           width: cellWidth,
           align: "right"
@@ -586,18 +610,18 @@ function drawMovementRow(doc, { row, index, x, y, width, columns }) {
         `Ref: ${normalizeDisplayText(row.reference, "N/A")}`
       ];
 
-      doc.font("Helvetica").fontSize(7).fillColor(REPORT_COLORS.muted);
+      doc.font("Helvetica").fontSize(6.35).fillColor(REPORT_COLORS.muted);
       contextLines.forEach((line, lineIndex) => {
         const renderedLine = truncateText(doc, line, cellWidth, line);
-        doc.text(renderedLine, cellX, y + 10 + lineIndex * 13, { width: cellWidth });
+        doc.text(renderedLine, cellX, y + 9 + lineIndex * 11, { width: cellWidth });
       });
     }
 
     if (column.key === "responsible") {
-      doc.font("Helvetica-Bold").fontSize(8.2).fillColor(REPORT_COLORS.ink).text(
+      doc.font("Helvetica-Bold").fontSize(7.4).fillColor(REPORT_COLORS.ink).text(
         truncateText(doc, row.entered_by, cellWidth, "-"),
         cellX,
-        y + 18,
+        y + 17,
         {
           width: cellWidth
         }
@@ -615,11 +639,11 @@ function drawMovementRow(doc, { row, index, x, y, width, columns }) {
 function drawEmptyState(doc, { x, y, width }) {
   doc.save();
   doc.roundedRect(x, y, width, 74, 16).fillAndStroke(REPORT_COLORS.white, REPORT_COLORS.border);
-  doc.font("Helvetica-Bold").fontSize(11).fillColor(REPORT_COLORS.ink).text("No movement data found", x, y + 20, {
+  doc.font("Helvetica-Bold").fontSize(10).fillColor(REPORT_COLORS.ink).text("No movement data found", x, y + 20, {
     width,
     align: "center"
   });
-  doc.font("Helvetica").fontSize(8.5).fillColor(REPORT_COLORS.muted).text(
+  doc.font("Helvetica").fontSize(7.8).fillColor(REPORT_COLORS.muted).text(
     "Adjust the selected filters to generate a populated report export.",
     x,
     y + 38,
@@ -637,7 +661,7 @@ function drawFooter(doc, { margin, generatedAt, pageIndex, pageCount }) {
 
   doc.save();
   doc.moveTo(margin, footerY - 8).lineTo(doc.page.width - margin, footerY - 8).strokeColor(REPORT_COLORS.border).lineWidth(1).stroke();
-  doc.font("Helvetica").fontSize(8).fillColor(REPORT_COLORS.muted).text(formatDisplayDateTime(generatedAt), margin, footerY, {
+  doc.font("Helvetica").fontSize(7.2).fillColor(REPORT_COLORS.muted).text(formatDisplayDateTime(generatedAt), margin, footerY, {
     width: 150
   });
   doc.text("Generated by Inventory System", margin, footerY, {
@@ -655,7 +679,7 @@ function renderMovementPdf(report, res) {
   const doc = new PDFDocument({ size: "A4", margin: 32, bufferPages: true });
   const margin = 32;
   const contentWidth = doc.page.width - margin * 2;
-  const summaryGap = 18;
+  const summaryGap = 12;
   const generatedAt = report.header?.generatedAt || new Date().toISOString();
   const reportItem = deriveScopedItem(report);
   const reportImagePath = resolveLocalReportImagePath(reportItem?.itemImage);
@@ -680,65 +704,68 @@ function renderMovementPdf(report, res) {
   doc.pipe(res);
 
   doc.save();
-  doc.rect(0, 0, doc.page.width, 132).fill(REPORT_COLORS.header);
-  doc.rect(0, 104, doc.page.width, 28).fill(REPORT_COLORS.headerDark);
+  doc.rect(0, 0, doc.page.width, 3).fill(REPORT_COLORS.accent);
+  doc.rect(0, 3, doc.page.width, 103).fill(REPORT_COLORS.header);
+  doc.moveTo(0, 106).lineTo(doc.page.width, 106).strokeColor(REPORT_COLORS.border).lineWidth(1).stroke();
   doc.restore();
 
-  drawLogoBadge(doc, margin, 28, 54);
+  drawLogoBadge(doc, margin, 28, 46);
 
-  const headerTextX = margin + 70;
+  const headerTextX = margin + 62;
   const headerTextWidth = contentWidth - 70;
-  doc.font("Helvetica-Bold").fontSize(24).fillColor(REPORT_COLORS.white).text("Latex Foam Store", headerTextX, 30, {
+  doc.font("Helvetica-Bold").fontSize(18).fillColor(REPORT_COLORS.ink).text("Latex Foam Store", headerTextX, 30, {
     width: headerTextWidth
   });
-  doc.font("Helvetica-Bold").fontSize(14).fillColor("#dbeafe").text("Item Report", headerTextX, 60, {
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(REPORT_COLORS.ink).text("Item Report", headerTextX, 52, {
     width: headerTextWidth
   });
-  doc.font("Helvetica").fontSize(9).fillColor("#e2e8f0").text(
+  doc.font("Helvetica").fontSize(7.8).fillColor(REPORT_COLORS.muted).text(
     `Generated: ${formatDisplayDateTime(generatedAt)}`,
     headerTextX,
-    83,
+    70,
     { width: headerTextWidth }
   );
   doc.text(
     `Reporting Window: ${formatDisplayDate(report.header?.fromDate)} to ${formatDisplayDate(report.header?.toDate)}`,
     headerTextX,
-    99,
+    84,
     { width: headerTextWidth }
   );
 
-  const summaryY = 152;
-  const metricWidth = (contentWidth - summaryGap) / 2;
+  const summaryY = 122;
+  const metricWidth = (contentWidth - summaryGap * 2) / 3;
   drawMetricCard(doc, {
     x: margin,
     y: summaryY,
     width: metricWidth,
-    height: 72,
+    height: 50,
     label: "Total Quantity",
     value: formatNumber(totalQuantity),
-    background: REPORT_COLORS.softBlue
+    background: REPORT_COLORS.softBlue,
+    valueFontSize: 11.5
   });
   drawMetricCard(doc, {
     x: margin + metricWidth + summaryGap,
     y: summaryY,
     width: metricWidth,
-    height: 72,
+    height: 50,
     label: "Current Stock",
     value: currentStockLabel,
-    background: REPORT_COLORS.softSlate
+    background: REPORT_COLORS.softSlate,
+    valueFontSize: 11.5
+  });
+  drawMetricCard(doc, {
+    x: margin + (metricWidth + summaryGap) * 2,
+    y: summaryY,
+    width: metricWidth,
+    height: 50,
+    label: "Movement Value",
+    value: formatCurrency(totalValue),
+    background: REPORT_COLORS.softSlate,
+    valueFontSize: 10.8
   });
 
-  doc.font("Helvetica").fontSize(8.5).fillColor(REPORT_COLORS.muted).text(
-    `Total movement value: ${formatCurrency(totalValue)}`,
-    margin,
-    summaryY + 82,
-    {
-      width: contentWidth,
-      align: "right"
-    }
-  );
-
-  let cursorY = summaryY + 102;
+  let cursorY = summaryY + 66;
   cursorY += drawItemSection(doc, {
     item: reportItem,
     imagePath: reportImagePath,
@@ -747,27 +774,27 @@ function renderMovementPdf(report, res) {
     width: contentWidth
   });
 
-  cursorY += 24;
-  doc.font("Helvetica-Bold").fontSize(14).fillColor(REPORT_COLORS.ink).text("Movement History", margin, cursorY, {
+  cursorY += 18;
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(REPORT_COLORS.ink).text("Movement History", margin, cursorY, {
     width: contentWidth / 2
   });
-  doc.font("Helvetica").fontSize(9).fillColor(REPORT_COLORS.muted).text(
+  doc.font("Helvetica").fontSize(7.8).fillColor(REPORT_COLORS.muted).text(
     "Detailed transaction log with quantity, cost, and movement context",
     margin,
-    cursorY + 18,
+    cursorY + 15,
     { width: contentWidth * 0.62 }
   );
-  doc.font("Helvetica-Bold").fontSize(9).fillColor(REPORT_COLORS.accent).text(
+  doc.font("Helvetica-Bold").fontSize(8).fillColor(REPORT_COLORS.accent).text(
     `${report.movements.length} rows`,
     margin + contentWidth - 80,
-    cursorY + 5,
+    cursorY + 3,
     {
       width: 80,
       align: "right"
     }
   );
 
-  cursorY += 44;
+  cursorY += 34;
   cursorY = drawTableHeader(doc, {
     x: margin,
     y: cursorY,
@@ -779,21 +806,21 @@ function renderMovementPdf(report, res) {
     drawEmptyState(doc, { x: margin, y: cursorY, width: contentWidth });
   } else {
     report.movements.forEach((row, index) => {
-      const rowHeight = 76;
+      const rowHeight = 68;
 
       if (cursorY + rowHeight + 44 > doc.page.height) {
         doc.addPage();
         cursorY = 36;
-        doc.font("Helvetica-Bold").fontSize(11).fillColor(REPORT_COLORS.ink).text("Movement History", margin, cursorY, {
+        doc.font("Helvetica-Bold").fontSize(10).fillColor(REPORT_COLORS.ink).text("Movement History", margin, cursorY, {
           width: contentWidth
         });
-        doc.font("Helvetica").fontSize(8.5).fillColor(REPORT_COLORS.muted).text(
+        doc.font("Helvetica").fontSize(7.6).fillColor(REPORT_COLORS.muted).text(
           "Continued from previous page",
           margin,
-          cursorY + 14,
+          cursorY + 13,
           { width: contentWidth }
         );
-        cursorY += 34;
+        cursorY += 28;
         cursorY = drawTableHeader(doc, {
           x: margin,
           y: cursorY,
@@ -811,6 +838,210 @@ function renderMovementPdf(report, res) {
         columns
       });
       cursorY += 8;
+    });
+  }
+
+  const pageCount = doc.bufferedPageRange().count;
+
+  for (let index = 0; index < pageCount; index += 1) {
+    doc.switchToPage(index);
+    drawFooter(doc, {
+      margin,
+      generatedAt,
+      pageIndex: index,
+      pageCount
+    });
+  }
+
+  doc.end();
+}
+
+function buildInventoryValueReport(rows, filters = {}) {
+  const totalQuantity = rows.reduce((sum, row) => sum + Number(row.current_quantity || 0), 0);
+  const totalValue = rows.reduce((sum, row) => sum + Number(row.total_value || 0), 0);
+  const scopeLabel =
+    filters.itemId && rows[0]?.item
+      ? rows[0].item
+      : "All Items";
+
+  return {
+    header: {
+      companyName: "Latex Foam Store",
+      reportTitle: "Inventory Valuation",
+      generatedAt: new Date().toISOString(),
+      scopeLabel
+    },
+    summary: {
+      itemCount: rows.length,
+      totalQuantity,
+      totalValue
+    },
+    rows
+  };
+}
+
+function drawInventoryValueRow(doc, { row, index, x, y, width, columns }) {
+  const rowHeight = 42;
+  const background = index % 2 === 0 ? REPORT_COLORS.white : REPORT_COLORS.rowAlt;
+
+  doc.save();
+  doc.roundedRect(x, y, width, rowHeight, 12).fillAndStroke(background, REPORT_COLORS.border);
+
+  let cursorX = x;
+  columns.forEach((column) => {
+    const cellX = cursorX + 8;
+    const cellWidth = column.width - 16;
+    let value = "-";
+
+    if (column.key === "item") {
+      value = truncateText(doc, row.item, cellWidth, "Item");
+    } else if (column.key === "unit") {
+      value = normalizeDisplayText(row.unit);
+    } else if (column.key === "quantity") {
+      value = formatNumber(row.current_quantity);
+    } else if (column.key === "average_cost") {
+      value = formatCurrency(row.average_cost);
+    } else if (column.key === "total_value") {
+      value = formatCurrency(row.total_value);
+    }
+
+    doc.font(column.key === "item" || column.key === "total_value" ? "Helvetica-Bold" : "Helvetica")
+      .fontSize(7.6)
+      .fillColor(REPORT_COLORS.ink)
+      .text(value, cellX, y + 15, {
+        width: cellWidth,
+        align: column.align || "left"
+      });
+
+    cursorX += column.width;
+  });
+
+  doc.restore();
+  return rowHeight;
+}
+
+function renderInventoryValuePdf(report, res) {
+  const doc = new PDFDocument({ size: "A4", margin: 32, bufferPages: true });
+  const margin = 32;
+  const contentWidth = doc.page.width - margin * 2;
+  const generatedAt = report.header?.generatedAt || new Date().toISOString();
+  const summaryGap = 12;
+  const metricWidth = (contentWidth - summaryGap * 2) / 3;
+  const columns = [
+    { key: "item", label: "Item", width: 223 },
+    { key: "unit", label: "Unit", width: 64 },
+    { key: "quantity", label: "Quantity", width: 74, align: "right" },
+    { key: "average_cost", label: "Avg Cost", width: 84, align: "right" },
+    { key: "total_value", label: "Total Value", width: 86, align: "right" }
+  ];
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", "attachment; filename=inventory-valuation-report.pdf");
+
+  doc.pipe(res);
+
+  doc.save();
+  doc.rect(0, 0, doc.page.width, 3).fill(REPORT_COLORS.accent);
+  doc.rect(0, 3, doc.page.width, 96).fill(REPORT_COLORS.white);
+  doc.moveTo(0, 99).lineTo(doc.page.width, 99).strokeColor(REPORT_COLORS.border).lineWidth(1).stroke();
+  doc.restore();
+
+  drawLogoBadge(doc, margin, 24, 42);
+
+  const headerTextX = margin + 56;
+  doc.font("Helvetica-Bold").fontSize(17).fillColor(REPORT_COLORS.ink).text("Latex Foam Store", headerTextX, 26, {
+    width: contentWidth - 56
+  });
+  doc.font("Helvetica-Bold").fontSize(10.5).fillColor(REPORT_COLORS.ink).text("Inventory Valuation", headerTextX, 47, {
+    width: contentWidth - 56
+  });
+  doc.font("Helvetica").fontSize(7.8).fillColor(REPORT_COLORS.muted).text(
+    `Scope: ${report.header?.scopeLabel || "All Items"}`,
+    headerTextX,
+    64,
+    { width: contentWidth - 56 }
+  );
+  doc.text(`Generated: ${formatDisplayDateTime(generatedAt)}`, headerTextX, 78, {
+    width: contentWidth - 56
+  });
+
+  const summaryY = 114;
+  drawMetricCard(doc, {
+    x: margin,
+    y: summaryY,
+    width: metricWidth,
+    height: 50,
+    label: "Items",
+    value: formatNumber(report.summary.itemCount),
+    background: REPORT_COLORS.softSlate,
+    valueFontSize: 11.5
+  });
+  drawMetricCard(doc, {
+    x: margin + metricWidth + summaryGap,
+    y: summaryY,
+    width: metricWidth,
+    height: 50,
+    label: "Total Quantity",
+    value: formatNumber(report.summary.totalQuantity),
+    background: REPORT_COLORS.softBlue,
+    valueFontSize: 11.5
+  });
+  drawMetricCard(doc, {
+    x: margin + (metricWidth + summaryGap) * 2,
+    y: summaryY,
+    width: metricWidth,
+    height: 50,
+    label: "Total Value",
+    value: formatCurrency(report.summary.totalValue),
+    background: REPORT_COLORS.softSlate,
+    valueFontSize: 10.8
+  });
+
+  let cursorY = summaryY + 70;
+  doc.font("Helvetica-Bold").fontSize(10.5).fillColor(REPORT_COLORS.ink).text("Valuation Detail", margin, cursorY, {
+    width: contentWidth / 2
+  });
+  doc.font("Helvetica").fontSize(7.6).fillColor(REPORT_COLORS.muted).text(
+    "Current quantity, average cost, and total value by item",
+    margin,
+    cursorY + 14,
+    { width: contentWidth }
+  );
+
+  cursorY += 30;
+  cursorY = drawTableHeader(doc, {
+    x: margin,
+    y: cursorY,
+    columns,
+    width: contentWidth
+  });
+
+  if (report.rows.length === 0) {
+    drawEmptyState(doc, { x: margin, y: cursorY, width: contentWidth });
+  } else {
+    report.rows.forEach((row, index) => {
+      const rowHeight = 42;
+
+      if (cursorY + rowHeight + 44 > doc.page.height) {
+        doc.addPage();
+        cursorY = 36;
+        cursorY = drawTableHeader(doc, {
+          x: margin,
+          y: cursorY,
+          columns,
+          width: contentWidth
+        });
+      }
+
+      cursorY += drawInventoryValueRow(doc, {
+        row,
+        index,
+        x: margin,
+        y: cursorY,
+        width: contentWidth,
+        columns
+      });
+      cursorY += 6;
     });
   }
 
@@ -884,6 +1115,50 @@ async function exportMovementReportExcel(filters, user) {
   return workbook.xlsx.writeBuffer();
 }
 
+async function exportInventoryValueCsv(filters, user) {
+  const rows = await getInventoryValue(filters, user);
+  const parser = new Parser({
+    fields: [
+      { label: "Item", value: "item" },
+      { label: "Unit", value: "unit" },
+      { label: "Current Quantity", value: "current_quantity" },
+      { label: "Average Cost", value: "average_cost" },
+      { label: "Total Value", value: "total_value" }
+    ]
+  });
+
+  return parser.parse(rows);
+}
+
+async function exportInventoryValueExcel(filters, user) {
+  const rows = await getInventoryValue(filters, user);
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Inventory Valuation");
+
+  sheet.columns = [
+    { header: "Item", key: "item", width: 34 },
+    { header: "Unit", key: "unit", width: 12 },
+    { header: "Current Quantity", key: "current_quantity", width: 18 },
+    { header: "Average Cost", key: "average_cost", width: 16 },
+    { header: "Total Value", key: "total_value", width: 18 }
+  ];
+
+  rows.forEach((row) => {
+    sheet.addRow(row);
+  });
+
+  sheet.getRow(1).font = { bold: true };
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+
+  return workbook.xlsx.writeBuffer();
+}
+
+async function exportInventoryValuePdf(filters, user, res) {
+  const rows = await getInventoryValue(filters, user);
+  const report = buildInventoryValueReport(rows, filters);
+  return renderInventoryValuePdf(report, res);
+}
+
 async function getInventoryValue(filters, user) {
   const scopedFilters = applyLocationScope(filters, user);
   const conditions = ["i.is_active = TRUE"];
@@ -952,5 +1227,8 @@ module.exports = {
   renderMovementPdf,
   exportMovementReportCsv,
   exportMovementReportExcel,
+  exportInventoryValueCsv,
+  exportInventoryValueExcel,
+  exportInventoryValuePdf,
   getInventoryValue
 };

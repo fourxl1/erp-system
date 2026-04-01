@@ -220,6 +220,16 @@ async function insertMovementAuditLog(client, userId, action, entityId, details)
   );
 }
 
+async function insertMaintenanceAuditLog(client, userId, action, entityId, details) {
+  await client.query(
+    `
+      INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
+      VALUES ($1, $2, $3, $4, $5)
+    `,
+    [userId, action, "maintenance_logs", entityId, JSON.stringify(details)]
+  );
+}
+
 async function triggerLowStockAlerts(entries = []) {
   const uniqueEntries = [...new Map(
     entries
@@ -767,6 +777,174 @@ async function getMaintenanceHistory(filters, user) {
   return maintenanceModel.getMaintenanceHistory(scopedFilters);
 }
 
+function assertMaintenanceModificationAccess(user, maintenanceLog) {
+  if (user.role_code === "STAFF") {
+    throw buildError("Staff cannot modify maintenance records", 403);
+  }
+
+  if (user.role_code === "ADMIN") {
+    assertStoreAccess(user, maintenanceLog.location_id);
+  }
+}
+
+async function removeMaintenanceUsageEntries(client, maintenanceId) {
+  const usageEntries = await maintenanceModel.getMaintenanceUsageEntries(maintenanceId, { client });
+  const affectedEntries = [];
+
+  for (const usage of usageEntries) {
+    if (!usage.movement_id) {
+      continue;
+    }
+
+    const movement = await movementModel.getMovementById(usage.movement_id, {
+      client,
+      forUpdate: true
+    });
+
+    if (!movement) {
+      continue;
+    }
+
+    await reverseExistingMovement(client, movement);
+    await movementModel.deleteLedgerEntries(client, movement.id);
+    await movementModel.deleteMovement(client, movement.id);
+    affectedEntries.push({
+      item_id: movement.item_id,
+      location_id: movement.location_id
+    });
+  }
+
+  await maintenanceModel.deleteMaintenanceItemsUsed(client, maintenanceId);
+
+  return {
+    usageEntries,
+    affectedEntries
+  };
+}
+
+async function updateMaintenanceRecord(id, payload, user) {
+  if (!Array.isArray(payload.items_used) || payload.items_used.length === 0) {
+    throw buildError("Maintenance must include at least one item used");
+  }
+
+  if (!payload.location_id) {
+    throw buildError("location_id is required for maintenance logs");
+  }
+
+  const updatedMaintenance = await withTransaction(async (client) => {
+    const existingLog = await maintenanceModel.getMaintenanceLogById(id, {
+      client,
+      forUpdate: true
+    });
+
+    if (!existingLog) {
+      throw buildError("Maintenance log not found", 404);
+    }
+
+    assertMaintenanceModificationAccess(user, existingLog);
+    assertStoreAccess(user, payload.location_id);
+
+    const { usageEntries, affectedEntries: reversedEntries } = await removeMaintenanceUsageEntries(client, id);
+
+    const updatedLog = await maintenanceModel.updateMaintenanceLog(client, id, {
+      asset_id: Number(payload.asset_id),
+      location_id: Number(payload.location_id),
+      description: payload.description
+    });
+
+    const usedItems = [];
+    const createdEntries = [];
+
+    for (const item of payload.items_used) {
+      const movement = await applySingleMovement(
+        client,
+        {
+          item_id: Number(item.item_id),
+          location_id: Number(payload.location_id),
+          section_id: item.section_id ? Number(item.section_id) : null,
+          movement_type: "MAINTENANCE",
+          quantity: Number(item.quantity),
+          unit_cost: item.unit_cost ? Number(item.unit_cost) : 0,
+          reference: payload.reference || `MAINT-${updatedLog.id}`,
+          asset_id: Number(payload.asset_id),
+          performed_by: user.id
+        },
+        user
+      );
+
+      usedItems.push(
+        await maintenanceModel.addMaintenanceItemUsed(client, {
+          maintenance_id: updatedLog.id,
+          movement_id: movement.id,
+          item_id: Number(item.item_id),
+          quantity: Number(item.quantity),
+          unit_cost: item.unit_cost ? Number(item.unit_cost) : 0
+        })
+      );
+
+      createdEntries.push({
+        item_id: movement.item_id,
+        location_id: movement.location_id
+      });
+    }
+
+    await insertMaintenanceAuditLog(client, user.id, "MAINTENANCE_UPDATED", id, {
+      old_value: {
+        ...existingLog,
+        items_used: usageEntries
+      },
+      new_value: {
+        ...updatedLog,
+        items_used: usedItems
+      }
+    });
+
+    return {
+      maintenance: {
+        ...updatedLog,
+        items_used: usedItems
+      },
+      affectedEntries: [...reversedEntries, ...createdEntries]
+    };
+  });
+
+  await triggerLowStockAlerts(updatedMaintenance.affectedEntries);
+  return updatedMaintenance.maintenance;
+}
+
+async function deleteMaintenanceRecord(id, user) {
+  const deletedMaintenance = await withTransaction(async (client) => {
+    const existingLog = await maintenanceModel.getMaintenanceLogById(id, {
+      client,
+      forUpdate: true
+    });
+
+    if (!existingLog) {
+      throw buildError("Maintenance log not found", 404);
+    }
+
+    assertMaintenanceModificationAccess(user, existingLog);
+
+    const { usageEntries, affectedEntries } = await removeMaintenanceUsageEntries(client, id);
+    const deletedLog = await maintenanceModel.deleteMaintenanceLog(client, id);
+
+    await insertMaintenanceAuditLog(client, user.id, "MAINTENANCE_DELETED", id, {
+      old_value: {
+        ...existingLog,
+        items_used: usageEntries
+      }
+    });
+
+    return {
+      maintenance: deletedLog || existingLog,
+      affectedEntries
+    };
+  });
+
+  await triggerLowStockAlerts(deletedMaintenance.affectedEntries);
+  return deletedMaintenance.maintenance;
+}
+
 function assertMovementModificationAccess(user, movement) {
   if (user.role_code === "STAFF") {
     throw buildError("Staff cannot modify stock movements", 403);
@@ -1034,6 +1212,8 @@ module.exports = {
   getRequestDetails,
   logMaintenance,
   getMaintenanceHistory,
+  updateMaintenanceRecord,
+  deleteMaintenanceRecord,
   getMaintenanceItems,
   getMaintenanceItemsForUser,
   normalizeMovementRecord,

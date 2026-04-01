@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import ImageLightbox from "../components/ImageLightbox";
 import {
+  downloadInventoryValueReportCsv,
+  downloadInventoryValueReportExcel,
+  downloadInventoryValueReportPdf,
   downloadMovementReportCsv,
   downloadMovementReportExcel,
   downloadMovementReportPdf,
@@ -107,6 +111,12 @@ function Reports() {
     (sum, row) => sum + Number(row.total_cost || 0),
     0
   );
+  const selectedItem = items.find((item) => String(item.id) === String(filters.item_id));
+  const selectedLocation = locations.find(
+    (location) => String(location.id) === String(filters.location_id)
+  );
+  const selectedScopeLabel = selectedItem?.name || "All Items";
+  const selectedLocationLabel = selectedLocation?.name || "All Locations";
 
   const movementTypeOptions = useMemo(
     () => [
@@ -147,6 +157,10 @@ function Reports() {
             <article>
               <p>Rows in Scope</p>
               <strong>{report.movements.length}</strong>
+            </article>
+            <article>
+              <p>Current Scope</p>
+              <strong>{selectedScopeLabel}</strong>
             </article>
           </div>
         </section>
@@ -295,65 +309,112 @@ function Reports() {
             <div>
               <p className="dashboard-card__eyebrow">Financial Snapshot</p>
               <h3>Inventory Valuation</h3>
+              <p className="reports-page__scope-copy">
+                {selectedScopeLabel} in {selectedLocationLabel}
+              </p>
+            </div>
+            <div className="inventory-card__actions reports-page__exports">
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() => handleExport(downloadInventoryValueReportPdf)}
+              >
+                Export PDF
+              </button>
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() => handleExport(downloadInventoryValueReportCsv)}
+              >
+                Export CSV
+              </button>
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() => handleExport(downloadInventoryValueReportExcel)}
+              >
+                Export Excel
+              </button>
             </div>
           </div>
-          <div className="inventory-table-wrapper">
-            <table className="inventory-table reports-page__table">
-              <thead>
-                <tr>
-                  <th>Image</th>
-                  <th>Item</th>
-                  <th>Unit</th>
-                  <th className="text-right">Qty</th>
-                  <th className="text-right">Avg Cost</th>
-                  <th className="text-right">Total Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inventoryValue.length === 0 ? (
+          <div className="reports-page__valuation-shell">
+            <div className="reports-page__valuation-summary">
+              <article>
+                <span>Scope</span>
+                <strong>{selectedScopeLabel}</strong>
+              </article>
+              <article>
+                <span>Items</span>
+                <strong>{inventoryValue.length}</strong>
+              </article>
+              <article>
+                <span>Total Value</span>
+                <strong>
+                  ${totalValuation.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                  })}
+                </strong>
+              </article>
+            </div>
+            <div className="inventory-table-wrapper reports-page__valuation-scroll">
+              <table className="inventory-table reports-page__table">
+                <thead>
                   <tr>
-                    <td colSpan="6" className="empty-state">
-                      No valuation data found.
-                    </td>
+                    <th>Image</th>
+                    <th>Item</th>
+                    <th>Unit</th>
+                    <th className="text-right">Qty</th>
+                    <th className="text-right">Avg Cost</th>
+                    <th className="text-right">Total Value</th>
                   </tr>
-                ) : (
-                  inventoryValue.map((row) => {
-                    const imageSrc = getImageSrc(row.item_image);
+                </thead>
+                <tbody>
+                  {inventoryValue.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="empty-state">
+                        No valuation data found.
+                      </td>
+                    </tr>
+                  ) : (
+                    inventoryValue.map((row) => {
+                      const imageSrc = getImageSrc(row.item_image);
 
-                    return (
-                      <tr key={row.item}>
-                        <td>
-                          {imageSrc ? (
-                            <button
-                              type="button"
-                              className="report-thumb"
-                              onClick={() => setPreviewImage({ src: imageSrc, alt: row.item })}
-                            >
-                              <img src={imageSrc} alt={row.item} />
-                            </button>
-                          ) : (
-                            <div className="report-thumb report-thumb--empty">
-                              {row.item.charAt(0).toUpperCase()}
-                            </div>
-                          )}
-                        </td>
-                        <td>{row.item}</td>
-                        <td>{row.unit || "-"}</td>
-                        <td className="text-right">
-                          <strong>{row.current_quantity}</strong>
-                        </td>
-                        <td className="text-right">
-                          ${Number(row.average_cost || 0).toFixed(2)}
-                        </td>
-                        <td className="text-right">
-                          <strong>${Number(row.total_value || 0).toFixed(2)}</strong>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                      return (
+                        <tr key={row.item}>
+                          <td>
+                            {imageSrc ? (
+                              <button
+                                type="button"
+                                className="report-thumb"
+                                onClick={() => setPreviewImage({ src: imageSrc, alt: row.item })}
+                              >
+                                <img src={imageSrc} alt={row.item} />
+                              </button>
+                            ) : (
+                              <div className="report-thumb report-thumb--empty">
+                                {row.item.charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                          </td>
+                          <td>{row.item}</td>
+                          <td>{row.unit || "-"}</td>
+                          <td className="text-right">
+                            <strong>{row.current_quantity}</strong>
+                          </td>
+                          <td className="text-right">
+                            ${Number(row.average_cost || 0).toFixed(2)}
+                          </td>
+                          <td className="text-right">
+                            <strong>${Number(row.total_value || 0).toFixed(2)}</strong>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -402,7 +463,19 @@ function Reports() {
 
                 {report.item ? (
                   <div className="report-context-bar__item">
-                    <div className="report-context-bar__thumb">
+                    <button
+                      type="button"
+                      className="report-context-bar__thumb"
+                      onClick={() =>
+                        report.item.itemImage
+                          ? setPreviewImage({
+                              src: getImageSrc(report.item.itemImage),
+                              alt: report.item.itemName
+                            })
+                          : undefined
+                      }
+                      disabled={!report.item.itemImage}
+                    >
                       {report.item.itemImage ? (
                         <img
                           src={getImageSrc(report.item.itemImage)}
@@ -411,7 +484,7 @@ function Reports() {
                       ) : (
                         <span>{report.item.itemName?.charAt(0).toUpperCase() || "?"}</span>
                       )}
-                    </div>
+                    </button>
                     <div className="report-context-bar__item-meta">
                       <strong>{report.item.itemName}</strong>
                       <span>
@@ -420,7 +493,14 @@ function Reports() {
                       </span>
                     </div>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="report-context-bar__item report-context-bar__item--scope">
+                    <div className="report-context-bar__item-meta">
+                      <strong>{selectedScopeLabel}</strong>
+                      <span>Showing movement activity for the current scope</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="report-context-bar__range">
@@ -546,24 +626,7 @@ function Reports() {
         </section>
       </div>
 
-      {previewImage ? (
-        <div className="modal-overlay" onClick={() => setPreviewImage(null)}>
-          <div
-            className="report-lightbox"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="report-lightbox__close"
-              onClick={() => setPreviewImage(null)}
-            >
-              x
-            </button>
-            <img src={previewImage.src} alt={previewImage.alt} />
-            <p>{previewImage.alt}</p>
-          </div>
-        </div>
-      ) : null}
+      <ImageLightbox image={previewImage} onClose={() => setPreviewImage(null)} />
     </DashboardLayout>
   );
 }

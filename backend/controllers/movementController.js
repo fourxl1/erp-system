@@ -103,6 +103,8 @@ const getDailyMovements = asyncHandler(async (req, res) => {
   const movements = await movementService.getDailyMovements(
     {
       date: req.query.date,
+      startDate: req.query.start_date,
+      endDate: req.query.end_date,
       itemId: req.query.item_id,
       locationId: req.query.location_id,
       movementType: req.query.movement_type

@@ -417,8 +417,23 @@ async function listMovements(filters = {}) {
 }
 
 async function listDailyMovements(filters = {}) {
-  const conditions = ["DATE(sm.created_at) = COALESCE($1::date, CURRENT_DATE)"];
-  const values = [filters.date || null];
+  const conditions = ["1 = 1"];
+  const values = [];
+
+  if (filters.startDate || filters.endDate) {
+    if (filters.startDate) {
+      values.push(filters.startDate);
+      conditions.push(`DATE(sm.created_at) >= $${values.length}::date`);
+    }
+
+    if (filters.endDate) {
+      values.push(filters.endDate);
+      conditions.push(`DATE(sm.created_at) <= $${values.length}::date`);
+    }
+  } else {
+    values.push(filters.date || null);
+    conditions.push(`DATE(sm.created_at) = COALESCE($${values.length}::date, CURRENT_DATE)`);
+  }
 
   if (filters.itemId) {
     values.push(filters.itemId);

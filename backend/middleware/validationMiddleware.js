@@ -147,6 +147,8 @@ const validationSchemas = {
   dailyMovementQuery: {
     query: [
       { field: "date", type: "string" },
+      { field: "start_date", type: "string" },
+      { field: "end_date", type: "string" },
       { field: "item_id", type: "id" },
       { field: "location_id", type: "id" },
       { field: "movement_type", type: "enum", values: acceptedMovementTypes }

@@ -8,6 +8,8 @@ const router = express.Router();
 
 router.post("/log", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.maintenanceLog), maintenanceController.logMaintenance);
 router.get("/history", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.maintenanceHistoryQuery), maintenanceController.getMaintenanceHistory);
+router.put("/:id", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate({ ...validationSchemas.maintenanceLog, params: validationSchemas.messageIdParam.params }), maintenanceController.updateMaintenance);
+router.delete("/:id", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.messageIdParam), maintenanceController.deleteMaintenance);
 router.get("/:id/items", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.messageIdParam), maintenanceController.getMaintenanceItems);
 router.get("/asset/:asset_id", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.assetParam), maintenanceController.getAssetMaintenanceHistory);
 

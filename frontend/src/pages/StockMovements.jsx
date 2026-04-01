@@ -44,6 +44,12 @@ function toDateTimeInputValue(value) {
   return localTime.toISOString().slice(0, 16);
 }
 
+function getTodayDateValue() {
+  const today = new Date();
+  const localDate = new Date(today.getTime() - today.getTimezoneOffset() * 60000);
+  return localDate.toISOString().slice(0, 10);
+}
+
 function createEmptyMovementForm(fixedLocationId = "") {
   return {
     item_id: "",
@@ -79,7 +85,12 @@ function StockMovements() {
   const [assets, setAssets] = useState([]);
   const [recipients, setRecipients] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
-  const [dailyDate, setDailyDate] = useState("");
+  const [dailyFilters, setDailyFilters] = useState(() => ({
+    start_date: getTodayDateValue(),
+    end_date: getTodayDateValue(),
+    location_id: fixedLocationId,
+    movement_type: ""
+  }));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [editingMovementId, setEditingMovementId] = useState(null);
@@ -127,9 +138,9 @@ function StockMovements() {
     }
   }, [fixedLocationId]);
 
-  const loadDailyMovements = useCallback(async (selectedDate = "") => {
+  const loadDailyMovements = useCallback(async (selectedFilters = {}) => {
     try {
-      const data = await fetchDailyMovements({ date: selectedDate });
+      const data = await fetchDailyMovements(selectedFilters);
       setMovements(Array.isArray(data) ? data : []);
     } catch (loadError) {
       console.error("Failed to load daily movements", loadError);
@@ -143,8 +154,8 @@ function StockMovements() {
   }, [itemScopeLocationId, loadReferences]);
 
   useEffect(() => {
-    void loadDailyMovements(dailyDate);
-  }, [dailyDate, loadDailyMovements]);
+    void loadDailyMovements(dailyFilters);
+  }, [dailyFilters, loadDailyMovements]);
 
   useEffect(() => {
     if (!editingMovementId) {
@@ -222,6 +233,14 @@ function StockMovements() {
     setFormData(createEmptyMovementForm(fixedLocationId));
   }
 
+  function handleDailyFilterChange(event) {
+    const { name, value } = event.target;
+    setDailyFilters((current) => ({
+      ...current,
+      [name]: value
+    }));
+  }
+
   async function handleSubmit() {
     if (!formData.item_id || !formData.quantity) {
       setError("Item and quantity are required");
@@ -274,7 +293,7 @@ function StockMovements() {
 
       resetMovementForm();
       setError("");
-      await loadDailyMovements(dailyDate);
+      await loadDailyMovements(dailyFilters);
     } catch (actionError) {
       console.error(actionError);
       setError(actionError.message || "Failed to record stock movement");
@@ -306,7 +325,7 @@ function StockMovements() {
       reference: movement.reference || "",
       created_at: toDateTimeInputValue(movement.timestamp || movement.created_at)
     });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    document.querySelector(".app-shell__content")?.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleDeleteMovement(id) {
@@ -318,7 +337,7 @@ function StockMovements() {
       setLoading(true);
       await deleteStockMovement(id);
       setError("");
-      await loadDailyMovements(dailyDate);
+      await loadDailyMovements(dailyFilters);
     } catch (actionError) {
       console.error(actionError);
       setError(actionError.message || "Failed to delete movement");
@@ -352,7 +371,7 @@ function StockMovements() {
         counted_quantity: ""
       });
       setError("");
-      await loadDailyMovements(dailyDate);
+      await loadDailyMovements(dailyFilters);
     } catch (actionError) {
       console.error(actionError);
       setError(actionError.message || "Failed to post inventory count");
@@ -380,7 +399,7 @@ function StockMovements() {
               <strong>{items.length}</strong>
             </article>
             <article>
-              <p>Today&apos;s Records</p>
+              <p>Visible Records</p>
               <strong>{movements.length}</strong>
             </article>
           </div>
@@ -623,7 +642,49 @@ function StockMovements() {
               <p className="dashboard-card__eyebrow">Daily Ledger</p>
               <h3>Daily Movements</h3>
             </div>
-            <input type="date" value={dailyDate} onChange={(event) => setDailyDate(event.target.value)} />
+            <div className="reports-page__exports stock-movements__filters">
+              <input
+                type="date"
+                name="start_date"
+                value={dailyFilters.start_date}
+                onChange={handleDailyFilterChange}
+              />
+              <input
+                type="date"
+                name="end_date"
+                value={dailyFilters.end_date}
+                onChange={handleDailyFilterChange}
+              />
+              {!isLocationBound ? (
+                <select
+                  name="location_id"
+                  value={dailyFilters.location_id}
+                  onChange={handleDailyFilterChange}
+                >
+                  <option value="">All Locations</option>
+                  {locations.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="inventory-inline-chip">Location: {selectedLocationName}</span>
+              )}
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() =>
+                  setDailyFilters((current) => ({
+                    ...current,
+                    start_date: getTodayDateValue(),
+                    end_date: getTodayDateValue()
+                  }))
+                }
+              >
+                Today
+              </button>
+            </div>
           </div>
 
           <div className="table-wrap">
