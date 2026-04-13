@@ -65,7 +65,8 @@ const getAuditLogs = asyncHandler(async (req, res) => {
   const logs = await systemService.listAuditLogs(
     {
       entityType: req.query.entity_type,
-      userId: req.query.user_id
+      userId: req.query.user_id,
+      locationId: req.query.location_id
     },
     req.user
   );
@@ -104,7 +105,7 @@ const updateUnit = asyncHandler(async (req, res) => {
 });
 
 const getSuppliers = asyncHandler(async (req, res) => {
-  const suppliers = await systemService.listSuppliers();
+  const suppliers = await systemService.listSuppliers(req.user, req.query.location_id);
   return sendSuccess(res, suppliers);
 });
 

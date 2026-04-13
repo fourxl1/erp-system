@@ -1,88 +1,77 @@
 const { query } = require("../config/db");
+const notificationModel = require("../models/notificationModel");
 const { getSocketServer } = require("../sockets");
+const {
+  buildError,
+  isAdmin,
+  isStaff,
+  isSuperAdmin,
+  resolveReadLocation,
+  resolveUserActiveLocation
+} = require("../utils/locationContext");
 
-let hasLoggedMissingNotificationsTable = false;
+const NOTIFICATION_TYPES = new Set(["REQUEST", "MESSAGE", "TRANSFER"]);
+const EVENT_TYPES = new Set(["CREATED", "UPDATED", "CONFIRMED", "REJECTED"]);
 
-function isMissingNotificationsTable(error) {
-  return error && error.code === "42P01";
+function uniqueIds(values = []) {
+  return [...new Set((values || []).map((entry) => Number(entry)).filter(Boolean))];
 }
 
-async function createNotification({ userId, title, message, type }) {
-  if (!userId) {
-    return null;
-  }
-
-  try {
-    const result = await query(
-      `
-        INSERT INTO notifications (user_id, title, message, type)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *
-      `,
-      [userId, title, message, type]
-    );
-
-    return result.rows[0];
-  } catch (error) {
-    if (isMissingNotificationsTable(error)) {
-      if (!hasLoggedMissingNotificationsTable) {
-        hasLoggedMissingNotificationsTable = true;
-        console.warn(
-          "Notifications table is missing. Skipping notification persistence until the database migration is applied."
-        );
-      }
-
-      return null;
-    }
-
-    throw error;
-  }
+function normalizeType(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return NOTIFICATION_TYPES.has(normalized) ? normalized : null;
 }
 
-async function emitToUsers(userIds, eventName, payload) {
+function normalizeEventType(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return EVENT_TYPES.has(normalized) ? normalized : null;
+}
+
+function emitRealtime(payload, recipients = {}) {
   const io = getSocketServer();
 
   if (!io) {
     return;
   }
 
-  [...new Set((userIds || []).map((value) => Number(value)).filter(Boolean))].forEach((userId) => {
-    io.to(`user:${userId}`).emit(eventName, payload);
+  const { userIds = [], locationIds = [] } = recipients;
+
+  uniqueIds(userIds).forEach((userId) => {
+    io.to(`user:${userId}`).emit("notification", payload);
+  });
+
+  uniqueIds(locationIds).forEach((locationId) => {
+    io.to(`location:${locationId}`).emit("notification", payload);
   });
 }
 
-async function notifyUsers(userIds, eventName, payload, notificationFactory) {
-  const uniqueUserIds = [...new Set((userIds || []).map((value) => Number(value)).filter(Boolean))];
-
-  for (const userId of uniqueUserIds) {
-    if (notificationFactory) {
-      const notification = notificationFactory(userId);
-
-      if (notification) {
-        try {
-          await createNotification({
-            userId,
-            title: notification.title,
-            message: notification.message,
-            type: notification.type
-          });
-        } catch (error) {
-          console.error("Failed to persist notification:", error.message);
-        }
-      }
-    }
-  }
-
-  await emitToUsers(uniqueUserIds, eventName, payload);
+function toRealtimePayload(notification) {
+  return {
+    id: notification.id,
+    type: notification.type,
+    event_type: notification.event_type,
+    reference_id: notification.reference_id || null,
+    title: notification.title,
+    message: notification.message,
+    is_read: Boolean(notification.is_read),
+    user_id: notification.user_id || null,
+    location_id: notification.location_id || null,
+    created_at: notification.created_at
+  };
 }
 
-async function getActiveUsersByRoles(roleNames, locationId = null) {
-  const values = [roleNames];
+async function getUserIdsByRole(roleNames = [], locationId = null) {
+  if (!Array.isArray(roleNames) || roleNames.length === 0) {
+    return [];
+  }
+
+  const normalizedRoles = roleNames.map((role) => String(role).toLowerCase());
+  const values = [normalizedRoles];
   const conditions = ["LOWER(r.name) = ANY($1::text[])", "COALESCE(u.is_active, TRUE) = TRUE"];
 
   if (locationId) {
     values.push(locationId);
-    conditions.push(`u.location_id = $${values.length}`);
+    conditions.push(`u.location_id = $${values.length}::BIGINT`);
   }
 
   const result = await query(
@@ -92,139 +81,267 @@ async function getActiveUsersByRoles(roleNames, locationId = null) {
       JOIN roles r ON r.id = u.role_id
       WHERE ${conditions.join(" AND ")}
     `,
-    values.map((value, index) => (index === 0 ? roleNames.map((role) => String(role).toLowerCase()) : value))
+    values
   );
 
   return result.rows.map((row) => Number(row.id));
 }
 
-async function notifyNewMessage(message) {
-  await notifyUsers(
-    [message.receiver_id],
-    "new_message",
+async function createAndDispatch(entry, targets = {}) {
+  const type = normalizeType(entry.type);
+  const eventType = normalizeEventType(entry.event_type);
+
+  if (!type || !eventType) {
+    throw buildError("Invalid notification type or event_type", 400);
+  }
+
+  const locationId = Number(entry.location_id) || null;
+  const userIds = uniqueIds(targets.userIds || []);
+  const locationTargets = uniqueIds(targets.locationIds || (locationId ? [locationId] : []));
+  const persisted = [];
+
+  if (userIds.length > 0) {
+    for (const userId of userIds) {
+      const created = await notificationModel.createNotification({
+        ...entry,
+        type,
+        event_type: eventType,
+        user_id: userId,
+        location_id: locationId
+      });
+      persisted.push(created);
+      emitRealtime(toRealtimePayload(created), { userIds: [userId] });
+    }
+    return persisted;
+  }
+
+  if (locationTargets.length > 0) {
+    for (const targetLocationId of locationTargets) {
+      const created = await notificationModel.createNotification({
+        ...entry,
+        type,
+        event_type: eventType,
+        user_id: null,
+        location_id: targetLocationId
+      });
+      persisted.push(created);
+      emitRealtime(toRealtimePayload(created), { locationIds: [targetLocationId] });
+    }
+    return persisted;
+  }
+
+  if (locationId) {
+    const created = await notificationModel.createNotification({
+      ...entry,
+      type,
+      event_type: eventType,
+      user_id: null,
+      location_id: locationId
+    });
+    persisted.push(created);
+    emitRealtime(toRealtimePayload(created), { locationIds: [locationId] });
+    return persisted;
+  }
+
+  persisted.push(
+    await notificationModel.createNotification({
+      ...entry,
+      type,
+      event_type: eventType,
+      user_id: null,
+      location_id: null
+    })
+  );
+
+  return persisted;
+}
+
+async function listNotifications(user, filters = {}) {
+  const type = filters.type ? normalizeType(filters.type) : null;
+  const isRead =
+    filters.is_read === undefined || filters.is_read === null || filters.is_read === ""
+      ? undefined
+      : String(filters.is_read).toLowerCase() === "true";
+  const locationId = resolveReadLocation(user, filters.location_id);
+
+  return notificationModel.listNotifications({
+    userId: user.id,
+    locationId,
+    type,
+    isRead,
+    limit: filters.limit,
+    offset: filters.offset
+  });
+}
+
+async function markNotificationAsRead(id, user, isRead = true) {
+  const locationId = resolveReadLocation(user, null);
+  const notification = await notificationModel.setNotificationReadState(id, isRead, {
+    userId: user.id,
+    locationId
+  });
+
+  if (!notification) {
+    throw buildError("Notification not found", 404);
+  }
+
+  return notification;
+}
+
+async function markAllAsRead(user, type = null) {
+  const locationId = resolveReadLocation(user, null);
+  const normalizedType = type ? normalizeType(type) : null;
+
+  if (type && !normalizedType) {
+    throw buildError("Invalid notification type", 400);
+  }
+
+  return notificationModel.markAllNotificationsRead({
+    userId: user.id,
+    locationId,
+    type: normalizedType
+  });
+}
+
+async function notifyMessageCreated(message) {
+  await createAndDispatch(
     {
-      id: message.id,
-      sender_id: message.sender_id,
-      sender_name: message.sender_name,
-      receiver_id: message.receiver_id,
-      receiver_name: message.receiver_name,
-      subject: message.subject,
-      message: message.message,
-      created_at: message.created_at
-    },
-    () => ({
+      type: "MESSAGE",
+      event_type: "CREATED",
+      reference_id: message.id,
       title: message.subject || "New message",
       message: `New message from ${message.sender_name}`,
-      type: "new_message"
-    })
-  );
-}
-
-async function notifyStockRequestCreated(request) {
-  const approverIds = await getActiveUsersByRoles(["Admin"], request.source_location_id);
-  const superAdminIds = await getActiveUsersByRoles(["SuperAdmin"]);
-
-  await notifyUsers(
-    [...approverIds, ...superAdminIds],
-    "stock_request_created",
-    request,
-    () => ({
-      title: "Stock request created",
-      message: `${request.requester_name || "A user"} created ${request.request_number}`,
-      type: "stock_request_created"
-    })
-  );
-}
-
-async function notifyStockRequestStatus(request, eventName) {
-  const title = eventName === "stock_request_approved" ? "Stock request approved" : "Stock request rejected";
-  const type = eventName;
-
-  await notifyUsers(
-    [request.requester_id],
-    eventName,
-    request,
-    () => ({
-      title,
-      message: `${request.request_number} is now ${request.status}`,
-      type
-    })
-  );
-}
-
-async function ensureLowStockAlert(itemId, locationId) {
-  const state = await query(
-    `
-      SELECT
-        i.id AS item_id,
-        i.name AS item_name,
-        i.reorder_level,
-        COALESCE(b.quantity, 0) AS current_quantity,
-        l.name AS location_name
-      FROM items i
-      JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $2
-      JOIN locations l ON l.id = b.location_id
-      WHERE i.id = $1
-    `,
-    [itemId, locationId]
-  );
-
-  const current = state.rows[0];
-
-  if (!current) {
-    return null;
-  }
-
-  if (Number(current.current_quantity) > Number(current.reorder_level || 0)) {
-    return null;
-  }
-
-  const title = `Low stock: ${current.item_name}`;
-  const message = `${current.item_name} is low at ${current.location_name}. Current quantity: ${current.current_quantity}.`;
-
-  await query(
-    `
-      INSERT INTO alerts (user_id, location_id, alert_type, title, message)
-      SELECT NULL, $1, 'LOW_STOCK', $2, $3
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM alerts
-        WHERE location_id = $1
-          AND alert_type = 'LOW_STOCK'
-          AND title = $2
-          AND is_read = FALSE
-      )
-    `,
-    [locationId, title, message]
-  );
-
-  const adminIds = await getActiveUsersByRoles(["Admin"], locationId);
-  const superAdminIds = await getActiveUsersByRoles(["SuperAdmin"]);
-
-  await notifyUsers(
-    [...adminIds, ...superAdminIds],
-    "low_stock_alert",
-    {
-      item_id: current.item_id,
-      item_name: current.item_name,
-      location_id: Number(locationId),
-      location_name: current.location_name,
-      current_quantity: Number(current.current_quantity),
-      reorder_level: Number(current.reorder_level || 0)
+      location_id: message.receiver_location_id || null
     },
-    () => ({
-      title,
-      message,
-      type: "low_stock_alert"
-    })
+    {
+      userIds: [message.receiver_id],
+      locationIds: [message.receiver_location_id]
+    }
   );
+}
 
-  return current;
+async function notifyRequestCreated(request) {
+  const adminIds = await getUserIdsByRole(["Admin"], request.source_location_id || null);
+  const superAdminIds = await getUserIdsByRole(["SuperAdmin"]);
+
+  await createAndDispatch(
+    {
+      type: "REQUEST",
+      event_type: "CREATED",
+      reference_id: request.id,
+      title: "New request submitted",
+      message: `${request.requester_name || "A user"} submitted ${request.request_number}`,
+      location_id: request.source_location_id || request.location_id || null
+    },
+    {
+      userIds: [...adminIds, ...superAdminIds],
+      locationIds: [request.source_location_id || request.location_id]
+    }
+  );
+}
+
+async function notifyRequestUpdated(request, eventType) {
+  const normalizedEvent = normalizeEventType(eventType) || "UPDATED";
+  const titleMap = {
+    UPDATED: "Request updated",
+    CONFIRMED: "Request approved",
+    REJECTED: "Request rejected"
+  };
+
+  await createAndDispatch(
+    {
+      type: "REQUEST",
+      event_type: normalizedEvent,
+      reference_id: request.id,
+      title: titleMap[normalizedEvent] || "Request updated",
+      message: `${request.request_number} is now ${request.status}`,
+      location_id: request.location_id || null
+    },
+    {
+      userIds: [request.requester_id],
+      locationIds: [request.location_id]
+    }
+  );
+}
+
+async function notifyTransferCreated(transfer, sourceName = "Source", destinationName = "Destination") {
+  const adminIds = await getUserIdsByRole(["Admin"], transfer.destination_location_id);
+  const superAdminIds = await getUserIdsByRole(["SuperAdmin"]);
+
+  await createAndDispatch(
+    {
+      type: "TRANSFER",
+      event_type: "CREATED",
+      reference_id: transfer.id,
+      title: `New transfer from ${sourceName}`,
+      message: `Transfer ${transfer.reference || `#${transfer.id}`} is waiting for receipt in ${destinationName}`,
+      location_id: transfer.destination_location_id
+    },
+    {
+      userIds: [...adminIds, ...superAdminIds],
+      locationIds: [transfer.destination_location_id]
+    }
+  );
+}
+
+async function notifyTransferConfirmed(transfer, sourceName = "Source", destinationName = "Destination") {
+  const sourceAdmins = await getUserIdsByRole(["Admin"], transfer.source_location_id);
+  const superAdminIds = await getUserIdsByRole(["SuperAdmin"]);
+
+  await createAndDispatch(
+    {
+      type: "TRANSFER",
+      event_type: "CONFIRMED",
+      reference_id: transfer.id,
+      title: `Transfer received in ${destinationName}`,
+      message: `Transfer ${transfer.reference || `#${transfer.id}`} from ${sourceName} has been received`,
+      location_id: transfer.source_location_id
+    },
+    {
+      userIds: [...sourceAdmins, ...superAdminIds, transfer.created_by],
+      locationIds: [transfer.source_location_id]
+    }
+  );
+}
+
+async function notifyTransferRejected(transfer, sourceName = "Source", destinationName = "Destination") {
+  const sourceAdmins = await getUserIdsByRole(["Admin"], transfer.source_location_id);
+  const superAdminIds = await getUserIdsByRole(["SuperAdmin"]);
+
+  await createAndDispatch(
+    {
+      type: "TRANSFER",
+      event_type: "REJECTED",
+      reference_id: transfer.id,
+      title: `Transfer rejected in ${destinationName}`,
+      message: `Transfer ${transfer.reference || `#${transfer.id}`} from ${sourceName} was rejected`,
+      location_id: transfer.source_location_id
+    },
+    {
+      userIds: [...sourceAdmins, ...superAdminIds, transfer.created_by],
+      locationIds: [transfer.source_location_id]
+    }
+  );
+}
+
+function getResolvedLocationForUser(user) {
+  if (isStaff(user) || isAdmin(user) || isSuperAdmin(user)) {
+    return resolveUserActiveLocation(user);
+  }
+
+  return null;
 }
 
 module.exports = {
-  notifyNewMessage,
-  notifyStockRequestCreated,
-  notifyStockRequestStatus,
-  ensureLowStockAlert
+  listNotifications,
+  markNotificationAsRead,
+  markAllAsRead,
+  notifyMessageCreated,
+  notifyRequestCreated,
+  notifyRequestUpdated,
+  notifyTransferCreated,
+  notifyTransferConfirmed,
+  notifyTransferRejected,
+  createAndDispatch,
+  getResolvedLocationForUser
 };

@@ -59,12 +59,14 @@ CREATE TABLE IF NOT EXISTS units (
 
 CREATE TABLE IF NOT EXISTS suppliers (
     id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(150) NOT NULL UNIQUE,
+    location_id BIGINT NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    name VARCHAR(150) NOT NULL,
     contact_name VARCHAR(150),
     phone VARCHAR(50),
     email VARCHAR(255),
     notes TEXT,
-    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE (location_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS items (
@@ -112,7 +114,7 @@ CREATE TABLE IF NOT EXISTS inventory_count_items (
 
 CREATE TABLE IF NOT EXISTS assets (
     id BIGSERIAL PRIMARY KEY,
-    location_id BIGINT REFERENCES locations(id),
+    location_id BIGINT NOT NULL REFERENCES locations(id),
     asset_code VARCHAR(100) NOT NULL UNIQUE,
     name VARCHAR(180) NOT NULL,
     description TEXT,
@@ -121,8 +123,10 @@ CREATE TABLE IF NOT EXISTS assets (
 
 CREATE TABLE IF NOT EXISTS recipients (
     id BIGSERIAL PRIMARY KEY,
+    location_id BIGINT NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
     name VARCHAR(150) NOT NULL,
-    department VARCHAR(150)
+    department VARCHAR(150),
+    UNIQUE (location_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS stock_movements (
@@ -141,6 +145,20 @@ CREATE TABLE IF NOT EXISTS stock_movements (
     supplier_id BIGINT REFERENCES suppliers(id),
     request_id BIGINT,
     performed_by BIGINT NOT NULL REFERENCES users(id),
+    created_by BIGINT REFERENCES users(id),
+    status VARCHAR(30) NOT NULL DEFAULT 'COMPLETED' CHECK (status IN ('PENDING', 'COMPLETED', 'REJECTED')),
+    transfer_confirmed_by BIGINT REFERENCES users(id),
+    transfer_confirmed_at TIMESTAMP WITHOUT TIME ZONE,
+    created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS stock_movement_items (
+    id BIGSERIAL PRIMARY KEY,
+    movement_id BIGINT NOT NULL REFERENCES stock_movements(id) ON DELETE CASCADE,
+    item_id BIGINT NOT NULL REFERENCES items(id),
+    location_id BIGINT NOT NULL REFERENCES locations(id),
+    quantity NUMERIC(18, 2) NOT NULL CHECK (quantity <> 0),
+    cost NUMERIC(18, 2) NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
 );
 
@@ -188,7 +206,7 @@ ALTER TABLE stock_movements
 CREATE TABLE IF NOT EXISTS maintenance_logs (
     id BIGSERIAL PRIMARY KEY,
     asset_id BIGINT NOT NULL REFERENCES assets(id),
-    location_id BIGINT REFERENCES locations(id),
+    location_id BIGINT NOT NULL REFERENCES locations(id),
     description TEXT NOT NULL,
     performed_by BIGINT NOT NULL REFERENCES users(id),
     created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
@@ -235,11 +253,14 @@ CREATE TABLE IF NOT EXISTS alerts (
 
 CREATE TABLE IF NOT EXISTS notifications (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL,
+    event_type VARCHAR(20) NOT NULL,
+    reference_id BIGINT,
     title VARCHAR(200) NOT NULL,
     message TEXT NOT NULL,
-    type VARCHAR(50) NOT NULL,
     is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    location_id BIGINT REFERENCES locations(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
 );
 
@@ -266,10 +287,17 @@ CREATE TABLE IF NOT EXISTS movement_logs (
 CREATE INDEX IF NOT EXISTS idx_inventory_balance_location ON inventory_balance(location_id);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_item_date ON stock_movements(item_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_movements_location_date ON stock_movements(location_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_status_created ON stock_movements(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_movements_source_destination ON stock_movements(source_location_id, destination_location_id);
+CREATE INDEX IF NOT EXISTS idx_stock_movement_items_movement ON stock_movement_items(movement_id);
+CREATE INDEX IF NOT EXISTS idx_stock_movement_items_item ON stock_movement_items(item_id);
+CREATE INDEX IF NOT EXISTS idx_stock_movement_items_location ON stock_movement_items(location_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_ledger_item_location ON inventory_ledger(item_id, location_id);
 CREATE INDEX IF NOT EXISTS idx_stock_requests_status ON stock_requests(status);
 CREATE INDEX IF NOT EXISTS idx_stock_requests_source_location ON stock_requests(source_location_id);
 CREATE INDEX IF NOT EXISTS idx_maintenance_logs_asset ON maintenance_logs(asset_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_location_created ON notifications(location_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_type_event ON notifications(type, event_type);
 CREATE INDEX IF NOT EXISTS idx_movement_logs_movement_timestamp ON movement_logs(movement_id, "timestamp" DESC);

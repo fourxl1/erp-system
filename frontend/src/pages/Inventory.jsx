@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import { useActiveLocationId } from "../hooks/useActiveLocation";
 import ItemIdentity from "../components/ItemIdentity";
 import {
   createItem,
@@ -38,6 +39,7 @@ function getInventoryHealth(item) {
 }
 
 function Inventory() {
+  const activeLocationId = useActiveLocationId();
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
@@ -75,7 +77,7 @@ function Inventory() {
 
   useEffect(() => {
     void loadData();
-  }, [loadData]);
+  }, [activeLocationId, loadData]);
 
   function handleChange(event) {
     const { name, value } = event.target;

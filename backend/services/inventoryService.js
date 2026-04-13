@@ -1,6 +1,7 @@
 const itemModel = require("../models/itemModel");
 const systemModel = require("../models/systemModel");
 const { query } = require("../config/db");
+const { resolveReadLocation } = require("../utils/locationContext");
 
 function assertStoreScope(user, locationId) {
   if (!locationId) {
@@ -8,7 +9,7 @@ function assertStoreScope(user, locationId) {
   }
 
   if (
-    (user.role_code === "STAFF" || user.role_code === "ADMIN") &&
+    user.role_code === "STAFF" &&
     user.location_id &&
     Number(user.location_id) !== Number(locationId)
   ) {
@@ -19,11 +20,7 @@ function assertStoreScope(user, locationId) {
 }
 
 function getScopedLocationId(user, requestedLocationId = null) {
-  if ((user.role_code === "STAFF" || user.role_code === "ADMIN") && user.location_id) {
-    return user.location_id;
-  }
-
-  return requestedLocationId;
+  return resolveReadLocation(user, requestedLocationId);
 }
 
 async function listItems(filters, user) {
@@ -129,8 +126,12 @@ async function getCurrentStockByLocation(itemId, user) {
     throw error;
   }
 
-  if ((user.role_code === "STAFF" || user.role_code === "ADMIN") && user.location_id) {
-    return result.balances.filter((balance) => Number(balance.location_id) === Number(user.location_id));
+  const scopedLocationId = getScopedLocationId(user, null);
+
+  if (scopedLocationId) {
+    return result.balances.filter(
+      (balance) => Number(balance.location_id) === Number(scopedLocationId)
+    );
   }
 
   return result.balances;
@@ -149,11 +150,10 @@ async function getAvailableInventory(filters, user) {
     conditions.push(`i.id = $${values.length}::BIGINT`);
   }
 
-  if ((user.role_code === "STAFF" || user.role_code === "ADMIN") && user.location_id) {
-    values.push(user.location_id);
-    conditions.push(`b.location_id = $${values.length}::BIGINT`);
-  } else if (filters.locationId) {
-    values.push(filters.locationId);
+  const scopedLocationId = getScopedLocationId(user, filters.locationId);
+
+  if (scopedLocationId) {
+    values.push(scopedLocationId);
     conditions.push(`b.location_id = $${values.length}::BIGINT`);
   }
 

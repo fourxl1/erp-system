@@ -25,7 +25,6 @@ const updateLocationSchema = {
 };
 const createSectionSchema = {
   body: [
-    { field: "location_id", type: "id" },
     { field: "name", required: true, type: "string", minLength: 2 },
     { field: "description", type: "string" }
   ]
@@ -33,14 +32,12 @@ const createSectionSchema = {
 const updateSectionSchema = {
   params: [{ field: "id", required: true, type: "id" }],
   body: [
-    { field: "location_id", type: "id" },
     { field: "name", required: true, type: "string", minLength: 2 },
     { field: "description", type: "string" }
   ]
 };
 const createAssetSchema = {
   body: [
-    { field: "location_id", type: "id" },
     { field: "asset_code", required: true, type: "string", minLength: 2 },
     { field: "name", required: true, type: "string", minLength: 2 },
     { field: "description", type: "string" }
@@ -97,7 +94,6 @@ const createUserSchema = {
     { field: "email", required: true, type: "email" },
     { field: "password", required: true, type: "string", minLength: 6 },
     { field: "role_name", type: "string", minLength: 5 },
-    { field: "location_id", type: "id" },
     { field: "is_active", type: "boolean" }
   ]
 };
@@ -107,7 +103,6 @@ const updateUserSchema = {
     { field: "full_name", required: true, type: "string", minLength: 2 },
     { field: "email", required: true, type: "email" },
     { field: "role_name", type: "string", minLength: 5 },
-    { field: "location_id", type: "id" },
     { field: "is_active", type: "boolean" }
   ]
 };
@@ -118,7 +113,6 @@ const createRecipientSchema = {
     { field: "department", type: "string" },
     { field: "email", type: "email" },
     { field: "password", type: "string", minLength: 6 },
-    { field: "location_id", type: "id" },
     {
       field: "name",
       custom: (_, body) => {
@@ -137,7 +131,6 @@ const updateRecipientSchema = {
     { field: "full_name", type: "string", minLength: 2 },
     { field: "department", type: "string" },
     { field: "email", type: "email" },
-    { field: "location_id", type: "id" },
     { field: "is_active", type: "boolean" },
     {
       field: "name",
@@ -153,7 +146,6 @@ const updateRecipientSchema = {
 const updateAssetSchema = {
   params: [{ field: "id", required: true, type: "id" }],
   body: [
-    { field: "location_id", type: "id" },
     { field: "asset_code", required: true, type: "string", minLength: 2 },
     { field: "name", required: true, type: "string", minLength: 2 },
     { field: "description", type: "string" }
@@ -161,7 +153,6 @@ const updateAssetSchema = {
 };
 const createCountSchema = {
   body: [
-    { field: "location_id", type: "id" },
     { field: "section_id", type: "id" },
     { field: "count_date", type: "string" },
     { field: "notes", type: "string" },

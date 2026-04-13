@@ -13,7 +13,8 @@ function buildToken(user) {
       id: user.id,
       role_id: user.role_id,
       role_name: user.role_name || "",
-      location_id: user.location_id || null
+      location_id: user.location_id || null,
+      active_location_id: user.location_id || null
     },
     process.env.JWT_SECRET,
     { expiresIn: "1h" }
@@ -70,7 +71,8 @@ const loginUser = asyncHandler(async (req, res) => {
         email: user.email,
         role_id: user.role_id,
         role_name: user.role_name,
-        location_id: user.location_id
+        location_id: user.location_id,
+        active_location_id: user.location_id
       }
     },
     {

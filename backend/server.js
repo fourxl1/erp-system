@@ -10,6 +10,49 @@ const PORT = Number(process.env.PORT || 5000);
 let server = null;
 let shuttingDown = false;
 
+function formatErrorDetails(error) {
+  if (!error) {
+    return "Unknown error";
+  }
+
+  const details = [];
+
+  if (error.message) {
+    details.push(error.message);
+  }
+
+  if (error.code) {
+    details.push(`code=${error.code}`);
+  }
+
+  if (error.address) {
+    details.push(`address=${error.address}`);
+  }
+
+  if (error.port) {
+    details.push(`port=${error.port}`);
+  }
+
+  if (Array.isArray(error.errors)) {
+    error.errors.forEach((innerError) => {
+      const innerDetails = formatErrorDetails(innerError);
+      if (innerDetails) {
+        details.push(innerDetails);
+      }
+    });
+  }
+
+  return details.length > 0 ? details.join("; ") : String(error);
+}
+
+function getDatabaseTargetLabel() {
+  if (process.env.DATABASE_URL) {
+    return "DATABASE_URL";
+  }
+
+  return `${process.env.DB_HOST || "localhost"}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME || ""}`;
+}
+
 async function shutdown(signal, error = null) {
   if (shuttingDown) {
     return;
@@ -62,7 +105,8 @@ async function startServer() {
       console.log(`Server is running on http://0.0.0.0:${PORT}`);
     });
   } catch (error) {
-    console.error("Database connection failed:", error.message);
+    console.error("Database connection failed:", formatErrorDetails(error));
+    console.error(`Check PostgreSQL availability and credentials for ${getDatabaseTargetLabel()}.`);
     process.exit(1);
   }
 }

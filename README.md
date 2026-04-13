@@ -48,10 +48,13 @@ That script creates a source-store admin, destination-store staff user, and demo
 
 ## Run
 
+### Local Development
+
 Backend:
 
 ```powershell
 cd C:\Users\Prince\Desktop\erp_system\backend
+npm install
 npm run dev
 ```
 
@@ -59,8 +62,11 @@ Frontend:
 
 ```powershell
 cd C:\Users\Prince\Desktop\erp_system\frontend
+npm install
 npm run dev
 ```
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for production deployment instructions.
 
 ## Verified URLs
 

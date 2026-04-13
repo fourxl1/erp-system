@@ -10,6 +10,23 @@ router.get("/", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validat
 router.get("/daily", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.dailyMovementQuery), movementController.getDailyMovements);
 router.post("/", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.movementPayload), movementController.recordMovement);
 router.put(
+  "/:id/confirm",
+  protect,
+  authorizeRoles("ADMIN", "SUPERADMIN"),
+  validate(validationSchemas.movementIdParam),
+  movementController.confirmTransfer
+);
+router.put(
+  "/:id/reject",
+  protect,
+  authorizeRoles("ADMIN", "SUPERADMIN"),
+  validate({
+    ...validationSchemas.movementIdParam,
+    body: [{ field: "reason", type: "string", minLength: 3 }]
+  }),
+  movementController.rejectTransfer
+);
+router.put(
   "/:id",
   protect,
   authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"),

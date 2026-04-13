@@ -140,6 +140,7 @@ const validationSchemas = {
       { field: "item_id", type: "id" },
       { field: "location_id", type: "id" },
       { field: "movement_type", type: "enum", values: acceptedMovementTypes },
+      { field: "status", type: "string" },
       { field: "start_date", type: "string" },
       { field: "end_date", type: "string" }
     ]
@@ -151,34 +152,79 @@ const validationSchemas = {
       { field: "end_date", type: "string" },
       { field: "item_id", type: "id" },
       { field: "location_id", type: "id" },
-      { field: "movement_type", type: "enum", values: acceptedMovementTypes }
+      { field: "movement_type", type: "enum", values: acceptedMovementTypes },
+      { field: "status", type: "string" }
     ]
   },
   movementPayload: {
     body: [
-      { field: "item_id", required: true, type: "id" },
       { field: "movement_type", required: true, type: "enum", values: acceptedMovementTypes },
-      { field: "quantity", required: true, type: "positive-number" },
-      { field: "location_id", type: "id" },
       { field: "section_id", type: "id" },
-      { field: "unit_cost", type: "number" },
       { field: "asset_id", type: "id" },
       { field: "recipient_id", type: "id" },
       { field: "supplier_id", type: "id" },
-      { field: "source_location_id", type: "id" },
       { field: "destination_location_id", type: "id" },
+      { field: "item_id", type: "id" },
+      { field: "quantity", type: "number" },
+      { field: "unit_cost", type: "number" },
+      {
+        field: "items",
+        type: "array",
+        custom: (value, body) => {
+          if ((!Array.isArray(value) || value.length === 0) && !(body.item_id && body.quantity !== undefined)) {
+            return "items is required";
+          }
+
+          if (Array.isArray(value)) {
+            for (const entry of value) {
+              if (!isPositiveInteger(entry.item_id)) {
+                return "each movement item must include a valid item_id";
+              }
+
+              if (Number.isNaN(Number(entry.quantity)) || Number(entry.quantity) === 0) {
+                return "each movement item must include a non-zero quantity";
+              }
+
+              if (!isBlank(entry.cost) && !isNonNegativeNumber(entry.cost)) {
+                return "each movement item cost must be a non-negative number";
+              }
+            }
+          }
+
+          return true;
+        }
+      },
       {
         field: "movement_type",
         custom: (value, body) => {
           const type = normalizeIncomingMovementType(value);
+          const items = Array.isArray(body.items) ? body.items : [];
+          const legacyQuantity = body.quantity;
+
           if (type === "TRANSFER") {
-            if (!isPositiveInteger(body.source_location_id)) {
-              return "source_location_id is required for transfers";
-            }
             if (!isPositiveInteger(body.destination_location_id)) {
               return "destination_location_id is required for transfers";
             }
           }
+
+          if (type === "IN" && !isPositiveInteger(body.supplier_id)) {
+            return "supplier_id is required for IN movements";
+          }
+
+          if (type === "OUT" && !isPositiveInteger(body.recipient_id)) {
+            return "recipient_id is required for OUT movements";
+          }
+
+          if (type !== "ADJUSTMENT") {
+            if (Array.isArray(items) && items.some((entry) => Number(entry.quantity) < 0)) {
+              return "negative quantities are only allowed for ADJUSTMENT movements";
+            }
+
+            if (!Array.isArray(items) && legacyQuantity !== undefined && Number(legacyQuantity) < 0) {
+              return "negative quantity is only allowed for ADJUSTMENT movements";
+            }
+          }
+
           return true;
         }
       }
@@ -196,19 +242,8 @@ const validationSchemas = {
   },
   createRequest: {
     body: [
-      { field: "location_id", type: "id" },
       { field: "source_location_id", required: true, type: "id" },
       { field: "notes", type: "string" },
-      {
-        field: "source_location_id",
-        custom: (value, body) => {
-          if (isPositiveInteger(body.location_id) && Number(value) === Number(body.location_id)) {
-            return "source_location_id cannot be the same as location_id";
-          }
-
-          return true;
-        }
-      },
       {
         field: "items",
         required: true,
@@ -246,7 +281,6 @@ const validationSchemas = {
   maintenanceLog: {
     body: [
       { field: "asset_id", required: true, type: "id" },
-      { field: "location_id", required: true, type: "id" },
       { field: "description", required: true, type: "string", minLength: 3 },
       { field: "reference", type: "string" },
       {

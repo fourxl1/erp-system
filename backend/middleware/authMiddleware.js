@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const { query } = require("../config/db");
 const { sendError } = require("../utils/http");
+const { toInt, isStaff } = require("../utils/locationContext");
 
 function ensureJwtConfigured() {
   if (!process.env.JWT_SECRET) {
@@ -12,16 +13,29 @@ function ensureJwtConfigured() {
 
 function buildUserContext(row, fallback = {}) {
   const roleName = row.role_name || fallback.role_name || "";
+  const decodedActiveLocation = toInt(fallback.active_location_id);
+  const persistedLocation = toInt(row.location_id);
 
   return {
     id: row.id,
     full_name: row.full_name,
     email: row.email,
     role_id: row.role_id,
-    location_id: row.location_id,
+    location_id: persistedLocation,
+    active_location_id: decodedActiveLocation || persistedLocation || null,
     role_name: roleName,
     role_code: roleName.toUpperCase()
   };
+}
+
+function resolveHeaderLocationId(req) {
+  const headerValue = req.headers["x-active-location-id"];
+
+  if (Array.isArray(headerValue)) {
+    return toInt(headerValue[0]);
+  }
+
+  return toInt(headerValue);
 }
 
 async function loadActiveUserById(userId, fallback = {}) {
@@ -75,6 +89,18 @@ async function protect(req, res, next) {
 
     if (!user) {
       return sendError(res, 401, "Not authorized, user not found");
+    }
+
+    req.user = user; // 
+
+    const headerLocationId = resolveHeaderLocationId(req);
+    const tokenLocationId = toInt(decoded.active_location_id);
+
+    if (isStaff(user)) {
+      user.active_location_id = user.location_id || null;
+    } else {
+      user.active_location_id =
+        headerLocationId || tokenLocationId || toInt(user.location_id) || null;
     }
 
     req.user = user;

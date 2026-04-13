@@ -14,6 +14,7 @@ const reportRoutes = require("./routes/reportRoutes");
 const messageRoutes = require("./routes/messageRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const alertRoutes = require("./routes/alertRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 const systemRoutes = require("./routes/systemRoutes");
 const recipientRoutes = require("./routes/recipientRoutes");
 const issueRoutes = require("./routes/issueRoutes");
@@ -44,7 +45,7 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Active-Location-Id"],
     exposedHeaders: ["Content-Disposition"]
   })
 );
@@ -130,6 +131,7 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/alerts", alertRoutes);
+app.use("/api/notifications", notificationRoutes);
 app.use("/api/system", systemRoutes);
 app.use("/api/recipients", recipientRoutes);
 app.use("/api/issues", issueRoutes);

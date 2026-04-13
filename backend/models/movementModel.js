@@ -107,7 +107,313 @@ async function createMovement(client, movement) {
     ]
   );
 
+  const created = result.rows[0];
+
+  if (created && movement.item_id && movement.quantity !== undefined && movement.quantity !== null) {
+    const detailQuantity =
+      movement.detail_quantity !== undefined && movement.detail_quantity !== null
+        ? movement.detail_quantity
+        : movement.quantity;
+
+    await client.query(
+      `
+        INSERT INTO stock_movement_items (movement_id, item_id, location_id, quantity, cost)
+        VALUES ($1::BIGINT, $2::BIGINT, $3::BIGINT, $4::NUMERIC, $5::NUMERIC)
+      `,
+      [created.id, movement.item_id, movement.location_id, detailQuantity, movement.unit_cost || 0]
+    );
+  }
+
+  return created;
+}
+
+async function createMovementHeader(client, movement) {
+  const result = await client.query(
+    `
+      INSERT INTO stock_movements (
+        item_id,
+        location_id,
+        section_id,
+        movement_type,
+        quantity,
+        unit_cost,
+        reference,
+        source_location_id,
+        destination_location_id,
+        asset_id,
+        recipient_id,
+        supplier_id,
+        request_id,
+        performed_by,
+        created_by,
+        status,
+        transfer_confirmed_by,
+        transfer_confirmed_at,
+        created_at
+      )
+      VALUES (
+        $1::BIGINT,
+        $2::BIGINT,
+        $3::BIGINT,
+        $4::TEXT,
+        $5::NUMERIC,
+        $6::NUMERIC,
+        $7::TEXT,
+        $8::BIGINT,
+        $9::BIGINT,
+        $10::BIGINT,
+        $11::BIGINT,
+        $12::BIGINT,
+        $13::BIGINT,
+        $14::BIGINT,
+        $15::BIGINT,
+        $16::TEXT,
+        $17::BIGINT,
+        $18::TIMESTAMP,
+        COALESCE($19::TIMESTAMP, NOW())
+      )
+      RETURNING *
+    `,
+    [
+      movement.item_id,
+      movement.location_id,
+      movement.section_id || null,
+      movement.movement_type,
+      movement.quantity,
+      movement.unit_cost || 0,
+      movement.reference || null,
+      movement.source_location_id || null,
+      movement.destination_location_id || null,
+      movement.asset_id || null,
+      movement.recipient_id || null,
+      movement.supplier_id || null,
+      movement.request_id || null,
+      movement.performed_by,
+      movement.created_by || movement.performed_by,
+      movement.status || "COMPLETED",
+      movement.transfer_confirmed_by || null,
+      movement.transfer_confirmed_at || null,
+      movement.created_at || null
+    ]
+  );
+
   return result.rows[0];
+}
+
+async function insertMovementItems(client, movementId, locationId, items = []) {
+  const created = [];
+
+  for (const item of items) {
+    const result = await client.query(
+      `
+        INSERT INTO stock_movement_items (movement_id, item_id, location_id, quantity, cost)
+        VALUES ($1::BIGINT, $2::BIGINT, $3::BIGINT, $4::NUMERIC, $5::NUMERIC)
+        RETURNING *
+      `,
+      [movementId, item.item_id, locationId, item.quantity, item.cost || 0]
+    );
+
+    created.push(result.rows[0]);
+  }
+
+  return created;
+}
+
+async function getMovementItemsByMovementId(movementId, options = {}) {
+  const executor = getExecutor(options.client);
+  const result = await executor.query(
+    `
+      SELECT
+        smi.id,
+        smi.movement_id,
+        smi.item_id,
+        smi.location_id,
+        smi.quantity,
+        smi.cost,
+        i.name AS item_name,
+        i.unit AS item_unit,
+        i.image_path AS item_image
+      FROM stock_movement_items smi
+      JOIN items i ON i.id = smi.item_id
+      WHERE smi.movement_id = $1::BIGINT
+      ORDER BY smi.id
+    `,
+    [movementId]
+  );
+
+  return result.rows;
+}
+
+async function getMovementHeaderById(id, options = {}) {
+  const executor = getExecutor(options.client);
+  const lockingClause = options.forUpdate ? "FOR UPDATE OF sm" : "";
+  const result = await executor.query(
+    `
+      SELECT
+        sm.id,
+        sm.location_id,
+        sm.section_id,
+        sm.movement_type,
+        sm.reference,
+        sm.source_location_id,
+        sm.destination_location_id,
+        sm.asset_id,
+        sm.recipient_id,
+        sm.supplier_id,
+        sm.request_id,
+        sm.performed_by,
+        sm.created_by,
+        sm.status,
+        sm.transfer_confirmed_by,
+        sm.transfer_confirmed_at,
+        sm.created_at,
+        location.name AS location_name,
+        source_location.name AS source_location_name,
+        destination_location.name AS destination_location_name,
+        recipient.name AS recipient_name,
+        supplier.name AS supplier_name,
+        creator.full_name AS created_by_name
+      FROM stock_movements sm
+      JOIN locations location ON location.id = sm.location_id
+      LEFT JOIN locations source_location ON source_location.id = sm.source_location_id
+      LEFT JOIN locations destination_location ON destination_location.id = sm.destination_location_id
+      LEFT JOIN recipients recipient ON recipient.id = sm.recipient_id
+      LEFT JOIN suppliers supplier ON supplier.id = sm.supplier_id
+      LEFT JOIN users creator ON creator.id = COALESCE(sm.created_by, sm.performed_by)
+      WHERE sm.id = $1::BIGINT
+      ${lockingClause}
+    `,
+    [id]
+  );
+
+  const header = result.rows[0];
+
+  if (!header) {
+    return null;
+  }
+
+  return {
+    ...header,
+    items: await getMovementItemsByMovementId(id, { client: options.client })
+  };
+}
+
+async function listMovementHeaders(filters = {}) {
+  const conditions = ["1 = 1"];
+  const values = [];
+
+  if (filters.locationId) {
+    values.push(filters.locationId);
+    conditions.push(
+      `(
+        sm.location_id = $${values.length}::BIGINT
+        OR sm.source_location_id = $${values.length}::BIGINT
+        OR sm.destination_location_id = $${values.length}::BIGINT
+      )`
+    );
+  }
+
+  if (filters.movementType) {
+    values.push(filters.movementType);
+    conditions.push(`sm.movement_type = $${values.length}::TEXT`);
+  }
+
+  if (filters.status) {
+    values.push(String(filters.status).toUpperCase());
+    conditions.push(`sm.status = $${values.length}::TEXT`);
+  }
+
+  if (filters.startDate) {
+    values.push(filters.startDate);
+    conditions.push(`sm.created_at >= $${values.length}::TIMESTAMP`);
+  }
+
+  if (filters.endDate) {
+    values.push(filters.endDate);
+    conditions.push(`sm.created_at <= $${values.length}::TIMESTAMP`);
+  }
+
+  const result = await query(
+    `
+      SELECT
+        sm.id,
+        sm.location_id,
+        sm.section_id,
+        sm.movement_type,
+        sm.reference,
+        sm.source_location_id,
+        sm.destination_location_id,
+        sm.asset_id,
+        sm.recipient_id,
+        sm.supplier_id,
+        sm.request_id,
+        sm.created_by,
+        sm.status,
+        sm.transfer_confirmed_by,
+        sm.transfer_confirmed_at,
+        sm.created_at,
+        location.name AS location_name,
+        source_location.name AS source_location_name,
+        destination_location.name AS destination_location_name,
+        recipient.name AS recipient_name,
+        supplier.name AS supplier_name,
+        creator.full_name AS created_by_name,
+        COALESCE(
+          json_agg(
+            jsonb_build_object(
+              'id', smi.id,
+              'item_id', smi.item_id,
+              'location_id', smi.location_id,
+              'quantity', smi.quantity,
+              'cost', smi.cost,
+              'item_name', i.name,
+              'item_unit', i.unit,
+              'item_image', i.image_path
+            )
+          ) FILTER (WHERE smi.id IS NOT NULL),
+          '[]'::json
+        ) AS items
+      FROM stock_movements sm
+      JOIN locations location ON location.id = sm.location_id
+      LEFT JOIN locations source_location ON source_location.id = sm.source_location_id
+      LEFT JOIN locations destination_location ON destination_location.id = sm.destination_location_id
+      LEFT JOIN recipients recipient ON recipient.id = sm.recipient_id
+      LEFT JOIN suppliers supplier ON supplier.id = sm.supplier_id
+      LEFT JOIN users creator ON creator.id = COALESCE(sm.created_by, sm.performed_by)
+      LEFT JOIN stock_movement_items smi ON smi.movement_id = sm.id
+      LEFT JOIN items i ON i.id = smi.item_id
+      WHERE ${conditions.join(" AND ")}
+      GROUP BY
+        sm.id,
+        location.name,
+        source_location.name,
+        destination_location.name,
+        recipient.name,
+        supplier.name,
+        creator.full_name
+      ORDER BY sm.created_at DESC
+    `,
+    values
+  );
+
+  return result.rows;
+}
+
+async function updateMovementStatus(client, id, status, meta = {}) {
+  const result = await client.query(
+    `
+      UPDATE stock_movements
+      SET
+        status = $1::TEXT,
+        transfer_confirmed_by = COALESCE($2::BIGINT, transfer_confirmed_by),
+        transfer_confirmed_at = COALESCE($3::TIMESTAMP, transfer_confirmed_at)
+      WHERE id = $4::BIGINT
+      RETURNING *
+    `,
+    [status, meta.transfer_confirmed_by || null, meta.transfer_confirmed_at || null, id]
+  );
+
+  return result.rows[0] || null;
 }
 
 async function getMovementById(id, options = {}) {
@@ -180,7 +486,32 @@ async function updateMovement(client, id, movement) {
     ]
   );
 
-  return result.rows[0] || null;
+  const updated = result.rows[0] || null;
+
+  if (updated && movement.item_id && movement.quantity !== undefined && movement.quantity !== null) {
+    const detailQuantity =
+      movement.detail_quantity !== undefined && movement.detail_quantity !== null
+        ? movement.detail_quantity
+        : movement.quantity;
+
+    await client.query(
+      `
+        DELETE FROM stock_movement_items
+        WHERE movement_id = $1::BIGINT
+      `,
+      [id]
+    );
+
+    await client.query(
+      `
+        INSERT INTO stock_movement_items (movement_id, item_id, location_id, quantity, cost)
+        VALUES ($1::BIGINT, $2::BIGINT, $3::BIGINT, $4::NUMERIC, $5::NUMERIC)
+      `,
+      [id, movement.item_id, movement.location_id, detailQuantity, movement.unit_cost || 0]
+    );
+  }
+
+  return updated;
 }
 
 async function createLedgerEntry(client, entry) {
@@ -503,6 +834,12 @@ async function listDailyMovements(filters = {}) {
 module.exports = {
   getBalanceForUpdate,
   upsertBalance,
+  createMovementHeader,
+  insertMovementItems,
+  getMovementItemsByMovementId,
+  getMovementHeaderById,
+  listMovementHeaders,
+  updateMovementStatus,
   getMovementById,
   updateMovement,
   createMovement,

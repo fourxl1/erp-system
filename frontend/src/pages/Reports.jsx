@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import { useActiveLocationId } from "../hooks/useActiveLocation";
 import ImageLightbox from "../components/ImageLightbox";
+import SortHeader from "../components/SortHeader";
+import TablePagination from "../components/TablePagination";
+import useSortedPagination from "../hooks/useSortedPagination";
 import {
   downloadInventoryValueReportCsv,
   downloadInventoryValueReportExcel,
@@ -36,8 +40,23 @@ function isOutgoingMovement(movement) {
 }
 
 function Reports() {
+  const activeLocationId = useActiveLocationId();
   const [inventoryValue, setInventoryValue] = useState([]);
-  const [report, setReport] = useState({ header: null, item: null, movements: [] });
+  const [inventorySummary, setInventorySummary] = useState({
+    item_count: 0,
+    total_quantity: 0,
+    total_value: 0
+  });
+  const [report, setReport] = useState({
+    header: null,
+    item: null,
+    summary: {
+      movement_count: 0,
+      total_quantity_delta: 0,
+      total_movement_value: 0
+    },
+    movements: []
+  });
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -49,7 +68,6 @@ function Reports() {
     item_id: "",
     category_id: "",
     recipient_id: "",
-    location_id: "",
     movement_type: "",
     start_date: "",
     end_date: ""
@@ -68,8 +86,26 @@ function Reports() {
           fetchRecipients()
         ]);
 
-      setInventoryValue(Array.isArray(valueData) ? valueData : []);
-      setReport(movementData || { header: null, item: null, movements: [] });
+      setInventoryValue(Array.isArray(valueData?.rows) ? valueData.rows : []);
+      setInventorySummary(
+        valueData?.summary || {
+          item_count: 0,
+          total_quantity: 0,
+          total_value: 0
+        }
+      );
+      setReport(
+        movementData || {
+          header: null,
+          item: null,
+          summary: {
+            movement_count: 0,
+            total_quantity_delta: 0,
+            total_movement_value: 0
+          },
+          movements: []
+        }
+      );
       setItems(itemData.items || []);
       setCategories(Array.isArray(categoryData) ? categoryData : []);
       setLocations(Array.isArray(locationData) ? locationData : []);
@@ -78,7 +114,21 @@ function Reports() {
     } catch (loadError) {
       console.error("Failed to load reports", loadError);
       setInventoryValue([]);
-      setReport({ header: null, item: null, movements: [] });
+      setInventorySummary({
+        item_count: 0,
+        total_quantity: 0,
+        total_value: 0
+      });
+      setReport({
+        header: null,
+        item: null,
+        summary: {
+          movement_count: 0,
+          total_quantity_delta: 0,
+          total_movement_value: 0
+        },
+        movements: []
+      });
       setError(loadError.message || "Failed to load reports");
     } finally {
       setLoading(false);
@@ -87,7 +137,7 @@ function Reports() {
 
   useEffect(() => {
     void loadData(filters);
-  }, [filters, loadData]);
+  }, [activeLocationId, filters, loadData]);
 
   function handleFilterChange(event) {
     const { name, value } = event.target;
@@ -103,20 +153,14 @@ function Reports() {
     }
   }
 
-  const totalValuation = inventoryValue.reduce(
-    (sum, row) => sum + Number(row.total_value || 0),
-    0
-  );
-  const totalMovementValue = report.movements.reduce(
-    (sum, row) => sum + Number(row.total_cost || 0),
-    0
-  );
+  const totalValuation = Number(inventorySummary.total_value || 0);
+  const totalMovementValue = Number(report.summary?.total_movement_value || 0);
   const selectedItem = items.find((item) => String(item.id) === String(filters.item_id));
   const selectedLocation = locations.find(
-    (location) => String(location.id) === String(filters.location_id)
+    (location) => String(location.id) === String(activeLocationId)
   );
   const selectedScopeLabel = selectedItem?.name || "All Items";
-  const selectedLocationLabel = selectedLocation?.name || "All Locations";
+  const selectedLocationLabel = selectedLocation?.name || "All Active Locations";
 
   const movementTypeOptions = useMemo(
     () => [
@@ -130,6 +174,48 @@ function Reports() {
     ],
     []
   );
+  const valuationTable = useSortedPagination(inventoryValue, {
+    initialSortKey: "item",
+    initialSortDirection: "asc",
+    initialPageSize: 10,
+    getSortValue: (row, key) => {
+      switch (key) {
+        case "item":
+          return row.item;
+        case "unit":
+          return row.unit;
+        case "current_quantity":
+          return Number(row.current_quantity || 0);
+        case "average_cost":
+          return Number(row.average_cost || 0);
+        case "total_value":
+          return Number(row.total_value || 0);
+        default:
+          return row?.[key];
+      }
+    }
+  });
+  const movementTable = useSortedPagination(report.movements || [], {
+    initialSortKey: "date",
+    initialSortDirection: "desc",
+    initialPageSize: 10,
+    getSortValue: (movement, key) => {
+      switch (key) {
+        case "date":
+          return movement.date;
+        case "item_name":
+          return movement.item_name;
+        case "movement_type":
+          return formatMovementType(movement.movement_type);
+        case "quantity":
+          return Number(movement.quantity || 0);
+        case "entered_by":
+          return movement.entered_by;
+        default:
+          return movement?.[key];
+      }
+    }
+  });
 
   return (
     <DashboardLayout>
@@ -156,7 +242,7 @@ function Reports() {
             </article>
             <article>
               <p>Rows in Scope</p>
-              <strong>{report.movements.length}</strong>
+              <strong>{report.summary?.movement_count || report.movements.length}</strong>
             </article>
             <article>
               <p>Current Scope</p>
@@ -213,23 +299,6 @@ function Reports() {
                   {categories.map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Location</span>
-                <select
-                  name="location_id"
-                  value={filters.location_id}
-                  onChange={handleFilterChange}
-                  className="inventory-input"
-                >
-                  <option value="">All Locations</option>
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
                     </option>
                   ))}
                 </select>
@@ -345,7 +414,7 @@ function Reports() {
               </article>
               <article>
                 <span>Items</span>
-                <strong>{inventoryValue.length}</strong>
+                <strong>{inventorySummary.item_count || inventoryValue.length}</strong>
               </article>
               <article>
                 <span>Total Value</span>
@@ -362,11 +431,54 @@ function Reports() {
                 <thead>
                   <tr>
                     <th>Image</th>
-                    <th>Item</th>
-                    <th>Unit</th>
-                    <th className="text-right">Qty</th>
-                    <th className="text-right">Avg Cost</th>
-                    <th className="text-right">Total Value</th>
+                    <th>
+                      <SortHeader
+                        label="Item"
+                        columnKey="item"
+                        sortKey={valuationTable.sortKey}
+                        sortDirection={valuationTable.sortDirection}
+                        onSort={valuationTable.toggleSort}
+                      />
+                    </th>
+                    <th>
+                      <SortHeader
+                        label="Unit"
+                        columnKey="unit"
+                        sortKey={valuationTable.sortKey}
+                        sortDirection={valuationTable.sortDirection}
+                        onSort={valuationTable.toggleSort}
+                      />
+                    </th>
+                    <th className="text-right">
+                      <SortHeader
+                        label="Qty"
+                        columnKey="current_quantity"
+                        sortKey={valuationTable.sortKey}
+                        sortDirection={valuationTable.sortDirection}
+                        onSort={valuationTable.toggleSort}
+                        align="right"
+                      />
+                    </th>
+                    <th className="text-right">
+                      <SortHeader
+                        label="Avg Cost"
+                        columnKey="average_cost"
+                        sortKey={valuationTable.sortKey}
+                        sortDirection={valuationTable.sortDirection}
+                        onSort={valuationTable.toggleSort}
+                        align="right"
+                      />
+                    </th>
+                    <th className="text-right">
+                      <SortHeader
+                        label="Total Value"
+                        columnKey="total_value"
+                        sortKey={valuationTable.sortKey}
+                        sortDirection={valuationTable.sortDirection}
+                        onSort={valuationTable.toggleSort}
+                        align="right"
+                      />
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -377,7 +489,7 @@ function Reports() {
                       </td>
                     </tr>
                   ) : (
-                    inventoryValue.map((row) => {
+                    valuationTable.pagedRows.map((row) => {
                       const imageSrc = getImageSrc(row.item_image);
 
                       return (
@@ -415,6 +527,15 @@ function Reports() {
                 </tbody>
               </table>
             </div>
+
+            <TablePagination
+              page={valuationTable.page}
+              pageSize={valuationTable.pageSize}
+              totalItems={valuationTable.totalItems}
+              totalPages={valuationTable.totalPages}
+              onPageChange={valuationTable.setPage}
+              onPageSizeChange={valuationTable.setPageSize}
+            />
           </div>
         </section>
 
@@ -517,17 +638,51 @@ function Reports() {
               <thead>
                 <tr>
                   <th>Image</th>
-                  <th>Date and Item</th>
-                  <th className="text-center">Activity</th>
-                  <th className="text-right">Quantity</th>
+                  <th>
+                    <SortHeader
+                      label="Date and Item"
+                      columnKey="date"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                    />
+                  </th>
+                  <th className="text-center">
+                    <SortHeader
+                      label="Activity"
+                      columnKey="movement_type"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                      align="center"
+                    />
+                  </th>
+                  <th className="text-right">
+                    <SortHeader
+                      label="Quantity"
+                      columnKey="quantity"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                      align="right"
+                    />
+                  </th>
                   <th>Unit</th>
                   <th>Metadata</th>
-                  <th>Responsible</th>
+                  <th>
+                    <SortHeader
+                      label="Responsible"
+                      columnKey="entered_by"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                    />
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {report.movements?.length ? (
-                  report.movements.map((movement, index) => {
+                  movementTable.pagedRows.map((movement, index) => {
                     const movementType = formatMovementType(movement.movement_type);
                     const imageSrc = getImageSrc(movement.item_image);
                     const outgoing = isOutgoingMovement(movement);
@@ -618,6 +773,15 @@ function Reports() {
               </tbody>
             </table>
           </div>
+
+          <TablePagination
+            page={movementTable.page}
+            pageSize={movementTable.pageSize}
+            totalItems={movementTable.totalItems}
+            totalPages={movementTable.totalPages}
+            onPageChange={movementTable.setPage}
+            onPageSizeChange={movementTable.setPageSize}
+          />
         </section>
       </div>
 

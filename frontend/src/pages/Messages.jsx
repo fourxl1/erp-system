@@ -51,14 +51,18 @@ function Messages() {
   useEffect(() => {
     const socket = getSocket();
 
-    function handleNewMessage() {
+    function handleNotification(notification) {
+      if (String(notification?.type || "").toUpperCase() !== "MESSAGE") {
+        return;
+      }
+
       void loadData();
     }
 
-    socket.on("new_message", handleNewMessage);
+    socket.on("notification", handleNotification);
 
     return () => {
-      socket.off("new_message", handleNewMessage);
+      socket.off("notification", handleNotification);
     };
   }, [loadData]);
 

@@ -1,5 +1,5 @@
 const { Server } = require("socket.io");
-const registerNotificationSocket = require("./notificationSocket");
+const { registerNotificationSocket } = require("./notificationSocket");
 const { getAllowedOrigins, isAllowedOrigin } = require("../utils/originPolicy");
 
 let ioInstance = null;

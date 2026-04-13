@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import { useActiveLocationId } from "../hooks/useActiveLocation";
 import ItemIdentity from "../components/ItemIdentity";
+import SortHeader from "../components/SortHeader";
+import TablePagination from "../components/TablePagination";
+import useSortedPagination from "../hooks/useSortedPagination";
 import {
   createMaintenanceLog,
   deleteMaintenanceLog,
@@ -11,22 +15,10 @@ import {
   fetchMaintenanceItems,
   updateMaintenanceLog
 } from "../services/api";
+import { normalizeRoleName, readStoredUser } from "../utils/auth";
 
-function readStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem("inventory-user-data") || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function normalizeRoleName(roleName) {
-  return String(roleName || "").trim().toLowerCase();
-}
-
-function createEmptyForm(locationId = "") {
+function createEmptyForm() {
   return {
-    location_id: locationId,
     asset_id: "",
     item_id: "",
     quantity: "",
@@ -38,10 +30,8 @@ function createEmptyForm(locationId = "") {
 function Maintenance() {
   const currentUser = readStoredUser();
   const currentRole = normalizeRoleName(currentUser.role_name);
-  const fixedLocationId =
-    currentRole === "superadmin" ? "" : String(currentUser.location_id || "");
-  const isLocationBound = Boolean(fixedLocationId);
   const canManageMaintenance = currentRole === "admin" || currentRole === "superadmin";
+  const activeLocationId = useActiveLocationId();
 
   const [history, setHistory] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -51,16 +41,15 @@ function Maintenance() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [editingMaintenanceId, setEditingMaintenanceId] = useState(null);
-  const [formData, setFormData] = useState(() => createEmptyForm(fixedLocationId));
+  const [formData, setFormData] = useState(createEmptyForm);
 
   async function loadData() {
     try {
-      const maintenanceParams = fixedLocationId ? { location_id: fixedLocationId } : {};
       const [historyData, locationData, assetData, itemData] = await Promise.all([
-        fetchMaintenanceHistory(maintenanceParams),
+        fetchMaintenanceHistory(),
         fetchLocations(),
-        fetchAssets(fixedLocationId ? Number(fixedLocationId) : undefined),
-        fetchItems(fixedLocationId ? { location_id: fixedLocationId } : {})
+        fetchAssets(),
+        fetchItems()
       ]);
 
       setHistory(Array.isArray(historyData) ? historyData : []);
@@ -69,7 +58,6 @@ function Maintenance() {
       setItems(itemData.items || []);
       setError("");
     } catch (loadError) {
-      console.error("Failed to load maintenance history", loadError);
       setError(loadError.message || "Failed to load maintenance data");
       setHistory([]);
     }
@@ -77,25 +65,11 @@ function Maintenance() {
 
   useEffect(() => {
     void loadData();
-  }, []);
-
-  useEffect(() => {
-    if (!editingMaintenanceId && fixedLocationId) {
-      setFormData((current) => ({
-        ...current,
-        location_id: fixedLocationId
-      }));
-    }
-  }, [editingMaintenanceId, fixedLocationId]);
-
-  function handleChange(event) {
-    const { name, value } = event.target;
-    setFormData((current) => ({ ...current, [name]: value }));
-  }
+  }, [activeLocationId]);
 
   function resetForm() {
     setEditingMaintenanceId(null);
-    setFormData(createEmptyForm(fixedLocationId));
+    setFormData(createEmptyForm());
   }
 
   async function handleViewItems(id) {
@@ -117,7 +91,6 @@ function Maintenance() {
       }));
       return resolvedItems;
     } catch (actionError) {
-      console.error(actionError);
       setError(actionError.message || "Failed to fetch maintenance items");
       return [];
     }
@@ -144,7 +117,6 @@ function Maintenance() {
     }));
     setEditingMaintenanceId(entry.maintenance_id);
     setFormData({
-      location_id: fixedLocationId || String(entry.location_id || ""),
       asset_id: String(entry.asset_id || ""),
       item_id: String(usedItem.item_id || ""),
       quantity: String(usedItem.quantity || ""),
@@ -155,7 +127,7 @@ function Maintenance() {
   }
 
   async function handleDelete(id) {
-    if (!window.confirm("Delete this maintenance record and reverse the stock usage?")) {
+    if (!window.confirm("Delete this maintenance record and reverse stock usage?")) {
       return;
     }
 
@@ -173,9 +145,7 @@ function Maintenance() {
       }
 
       await loadData();
-      setError("");
     } catch (actionError) {
-      console.error(actionError);
       setError(actionError.message || "Failed to delete maintenance");
     } finally {
       setLoading(false);
@@ -183,14 +153,13 @@ function Maintenance() {
   }
 
   async function handleSubmit() {
-    if (
-      !formData.location_id ||
-      !formData.asset_id ||
-      !formData.item_id ||
-      !formData.quantity ||
-      !formData.description.trim()
-    ) {
-      setError("Location, asset, item, quantity, and description are required");
+    if (!activeLocationId) {
+      setError("Active location context is required");
+      return;
+    }
+
+    if (!formData.asset_id || !formData.item_id || !formData.quantity || !formData.description.trim()) {
+      setError("Asset, item, quantity, and description are required");
       return;
     }
 
@@ -198,7 +167,6 @@ function Maintenance() {
       setLoading(true);
       const payload = {
         asset_id: Number(formData.asset_id),
-        location_id: Number(formData.location_id),
         description: formData.description,
         reference: formData.reference,
         items_used: [
@@ -219,7 +187,6 @@ function Maintenance() {
       await loadData();
       setError("");
     } catch (actionError) {
-      console.error(actionError);
       setError(actionError.message || "Failed to save maintenance");
     } finally {
       setLoading(false);
@@ -227,15 +194,35 @@ function Maintenance() {
   }
 
   const selectedLocationName =
-    locations.find((location) => String(location.id) === String(fixedLocationId))?.name ||
-    "Assigned Location";
+    locations.find((location) => String(location.id) === String(activeLocationId))?.name ||
+    "Active Location";
+  const historyTable = useSortedPagination(history, {
+    initialSortKey: "created_at",
+    initialSortDirection: "desc",
+    initialPageSize: 10,
+    getSortValue: (entry, key) => {
+      switch (key) {
+        case "asset_name":
+          return entry.asset_name;
+        case "description":
+          return entry.description;
+        case "performed_by":
+          return entry.performed_by;
+        case "created_at":
+          return entry.created_at;
+        default:
+          return entry?.[key];
+      }
+    }
+  });
+  const pagedHistory = historyTable.pagedRows;
 
   return (
     <DashboardLayout>
       <div className="module-placeholder">
         <span className="module-placeholder__eyebrow">Maintenance</span>
         <h2>Maintenance History</h2>
-        <p>Track maintenance events and material usage linked to assets.</p>
+        <p>Maintenance records are automatically tagged to your active location.</p>
       </div>
 
       {error ? <p className="form-error">{error}</p> : null}
@@ -258,20 +245,15 @@ function Maintenance() {
         </div>
 
         <div className="admin-grid admin-grid--maintenance">
-          {isLocationBound ? (
-            <div className="inventory-inline-chip">Location: {selectedLocationName}</div>
-          ) : (
-            <select name="location_id" value={formData.location_id} onChange={handleChange}>
-              <option value="">Location</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
-          )}
+          <div className="inventory-inline-chip">Location: {selectedLocationName}</div>
 
-          <select name="asset_id" value={formData.asset_id} onChange={handleChange}>
+          <select
+            name="asset_id"
+            value={formData.asset_id}
+            onChange={(event) =>
+              setFormData((current) => ({ ...current, asset_id: event.target.value }))
+            }
+          >
             <option value="">Asset</option>
             {assets.map((asset) => (
               <option key={asset.id} value={asset.id}>
@@ -280,7 +262,13 @@ function Maintenance() {
             ))}
           </select>
 
-          <select name="item_id" value={formData.item_id} onChange={handleChange}>
+          <select
+            name="item_id"
+            value={formData.item_id}
+            onChange={(event) =>
+              setFormData((current) => ({ ...current, item_id: event.target.value }))
+            }
+          >
             <option value="">Item Used</option>
             {items.map((item) => (
               <option key={item.id} value={item.id}>
@@ -294,21 +282,27 @@ function Maintenance() {
             name="quantity"
             placeholder="Quantity Used"
             value={formData.quantity}
-            onChange={handleChange}
+            onChange={(event) =>
+              setFormData((current) => ({ ...current, quantity: event.target.value }))
+            }
           />
 
           <input
             name="reference"
             placeholder="Reference"
             value={formData.reference}
-            onChange={handleChange}
+            onChange={(event) =>
+              setFormData((current) => ({ ...current, reference: event.target.value }))
+            }
           />
 
           <input
             name="description"
             placeholder="Work performed"
             value={formData.description}
-            onChange={handleChange}
+            onChange={(event) =>
+              setFormData((current) => ({ ...current, description: event.target.value }))
+            }
           />
 
           <button type="button" className="primary-button" onClick={handleSubmit} disabled={loading}>
@@ -322,10 +316,42 @@ function Maintenance() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Asset</th>
-                <th>Description</th>
-                <th>Performed By</th>
-                <th>Date</th>
+                <th>
+                  <SortHeader
+                    label="Asset"
+                    columnKey="asset_name"
+                    sortKey={historyTable.sortKey}
+                    sortDirection={historyTable.sortDirection}
+                    onSort={historyTable.toggleSort}
+                  />
+                </th>
+                <th>
+                  <SortHeader
+                    label="Description"
+                    columnKey="description"
+                    sortKey={historyTable.sortKey}
+                    sortDirection={historyTable.sortDirection}
+                    onSort={historyTable.toggleSort}
+                  />
+                </th>
+                <th>
+                  <SortHeader
+                    label="Performed By"
+                    columnKey="performed_by"
+                    sortKey={historyTable.sortKey}
+                    sortDirection={historyTable.sortDirection}
+                    onSort={historyTable.toggleSort}
+                  />
+                </th>
+                <th>
+                  <SortHeader
+                    label="Date"
+                    columnKey="created_at"
+                    sortKey={historyTable.sortKey}
+                    sortDirection={historyTable.sortDirection}
+                    onSort={historyTable.toggleSort}
+                  />
+                </th>
                 <th>Items Used</th>
                 {canManageMaintenance ? <th className="text-right">Actions</th> : null}
               </tr>
@@ -341,7 +367,7 @@ function Maintenance() {
                   </td>
                 </tr>
               ) : (
-                history.map((entry) => (
+                pagedHistory.map((entry) => (
                   <tr key={entry.maintenance_id}>
                     <td>{entry.asset_name}</td>
                     <td>{entry.description}</td>
@@ -402,6 +428,15 @@ function Maintenance() {
             </tbody>
           </table>
         </div>
+
+        <TablePagination
+          page={historyTable.page}
+          pageSize={historyTable.pageSize}
+          totalItems={historyTable.totalItems}
+          totalPages={historyTable.totalPages}
+          onPageChange={historyTable.setPage}
+          onPageSizeChange={historyTable.setPageSize}
+        />
       </div>
     </DashboardLayout>
   );

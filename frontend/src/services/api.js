@@ -1,5 +1,8 @@
-const API_BASE_URL = "/api";
-const API_ORIGIN = "";
+const configuredApiUrl = String(import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+export const API_BASE_URL = configuredApiUrl
+  ? (configuredApiUrl.endsWith("/api") ? configuredApiUrl : `${configuredApiUrl}/api`)
+  : "/api";
+export const API_ORIGIN = configuredApiUrl.replace(/\/api$/i, "");
 
 export function resolveApiUrl(path) {
   if (!path) return "";
@@ -15,10 +18,27 @@ function getToken() {
   return localStorage.getItem("token");
 }
 
+function buildAuthHeaders(extraHeaders = {}) {
+  const token = getToken();
+  const headers = { ...extraHeaders };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+    const activeLocationId = getActiveLocationId();
+
+    if (activeLocationId) {
+      headers["X-Active-Location-Id"] = activeLocationId;
+    }
+  }
+
+  return headers;
+}
+
 function clearSession() {
   localStorage.removeItem("token");
   localStorage.removeItem("inventory-user");
   localStorage.removeItem("inventory-user-data");
+  localStorage.removeItem("inventory-active-location-id");
 }
 
 function buildQuery(params = {}) {
@@ -41,6 +61,25 @@ function unwrapResponse(payload) {
   return payload;
 }
 
+function getActiveLocationId() {
+  const raw = localStorage.getItem("inventory-active-location-id");
+
+  if (raw && /^\d+$/.test(String(raw))) {
+    return String(raw);
+  }
+
+  try {
+    const user = JSON.parse(localStorage.getItem("inventory-user-data") || "{}");
+    if (user?.location_id && /^\d+$/.test(String(user.location_id))) {
+      return String(user.location_id);
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
 function buildNetworkError(error) {
   if (error instanceof Error && error.name === "TypeError") {
     return new Error(`Unable to reach the API at ${API_BASE_URL}. Check backend availability and CORS.`);
@@ -50,15 +89,10 @@ function buildNetworkError(error) {
 }
 
 async function request(path, options = {}) {
-  const token = getToken();
   const headers = {
     Accept: "application/json",
-    ...options.headers
+    ...buildAuthHeaders(options.headers)
   };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
 
   let response;
 
@@ -86,12 +120,11 @@ async function request(path, options = {}) {
 }
 
 async function downloadFile(path, fallbackName) {
-  const token = getToken();
   let response;
 
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
+      headers: buildAuthHeaders()
     });
   } catch (error) {
     throw buildNetworkError(error);
@@ -151,6 +184,18 @@ export const deleteStockMovement = (id) =>
     method: "DELETE"
   });
 
+export const confirmTransfer = (id) =>
+  request(`/stock-movements/${id}/confirm`, {
+    method: "PUT"
+  });
+
+export const rejectTransfer = (id, data = {}) =>
+  request(`/stock-movements/${id}/reject`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
+
 export const fetchDailyMovements = (params = {}) =>
   request(`/movements/daily${buildQuery(params)}`);
 
@@ -183,6 +228,26 @@ export const rejectRequest = (id, data = {}) =>
 export const fetchAlerts = () => request("/alerts");
 export const markAlertAsRead = (id) =>
   request(`/alerts/${id}/read`, { method: "PUT" });
+
+export const fetchNotifications = (params = {}) =>
+  request(`/notifications${buildQuery(params)}`);
+
+export const markNotificationAsRead = (id) =>
+  request(`/notifications/${id}/read`, { method: "PUT" });
+
+export const setNotificationReadState = (id, isRead) =>
+  request(`/notifications/${id}/read-state`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ is_read: Boolean(isRead) })
+  });
+
+export const markAllNotificationsAsRead = (type = "") =>
+  request("/notifications/read-all", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(type ? { type } : {})
+  });
 
 export const fetchMessageUsers = () => request("/messages/users");
 export const fetchMessages = () => request("/messages");
@@ -288,8 +353,7 @@ export const updateUser = (id, data) =>
     body: JSON.stringify(data)
   });
 
-export const fetchSections = (locationId) =>
-  request(`/system/sections${buildQuery({ location_id: locationId })}`);
+export const fetchSections = () => request("/system/sections");
 
 export const createSection = (data) =>
   request("/system/sections", {
@@ -305,8 +369,7 @@ export const updateSection = (id, data) =>
     body: JSON.stringify(data)
   });
 
-export const fetchAssets = (locationId) =>
-  request(`/system/assets${buildQuery({ location_id: locationId })}`);
+export const fetchAssets = () => request("/system/assets");
 
 export const createAsset = (data) =>
   request("/system/assets", {

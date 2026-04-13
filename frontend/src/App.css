@@ -1975,6 +1975,81 @@
   font-size: 0.9rem;
 }
 
+.table-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.table-sort-button--center {
+  justify-content: center;
+  width: 100%;
+}
+
+.table-sort-button--right {
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.table-sort-button__icon {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.table-sort-button__icon--active {
+  color: var(--brand-blue-deep);
+}
+
+.table-pagination {
+  margin-top: 0.9rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.table-pagination__meta {
+  color: var(--brand-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.table-pagination__controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.table-pagination__size {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--brand-muted);
+  font-size: 0.85rem;
+}
+
+.table-pagination__size select {
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  padding: 0.35rem 0.55rem;
+  background: #ffffff;
+}
+
+.table-pagination__page {
+  color: #334155;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 .admin-grid {
   display: grid;
   gap: 0.85rem;
@@ -3886,6 +3961,42 @@
 
 html {
   scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+}
+
+body {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(37, 99, 235, 0.45) rgba(15, 23, 42, 0.08);
+}
+
+*::-webkit-scrollbar {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 3px solid rgba(255, 255, 255, 0.72);
+  background: linear-gradient(180deg, rgba(14, 165, 233, 0.82), rgba(37, 99, 235, 0.82));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(8, 145, 178, 0.9), rgba(29, 78, 216, 0.9));
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .app-shell {
@@ -3900,8 +4011,11 @@ html {
 .app-shell__sidebar {
   width: 252px;
   align-self: stretch;
-  position: sticky;
-  top: 1.35rem;
+  position: relative;
+  top: auto;
+  height: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .app-shell__main {
@@ -3909,13 +4023,13 @@ html {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  min-width: 0;
+  overflow: visible;
 }
 
 .app-shell__content {
   flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible;
   min-height: 0;
 }
 
@@ -4160,5 +4274,181 @@ html {
   .image-lightbox__panel {
     width: 100%;
     padding: 0.75rem;
+  }
+}
+
+.location-context-select {
+  min-width: 13rem;
+  max-width: 16rem;
+}
+
+.notification-filter {
+  min-width: 8rem;
+}
+
+.request-notice-card--active {
+  border-color: rgba(37, 99, 235, 0.24);
+  background: rgba(239, 246, 255, 0.92);
+}
+
+.flash-stack {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 120;
+  display: grid;
+  gap: 0.6rem;
+  width: min(22rem, calc(100vw - 2rem));
+}
+
+.flash-banner {
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  padding: 0.75rem 0.85rem;
+  text-align: left;
+  display: grid;
+  gap: 0.3rem;
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.16);
+}
+
+.flash-banner strong {
+  font-size: 0.9rem;
+}
+
+.flash-banner span {
+  color: var(--brand-muted);
+  font-size: 0.82rem;
+}
+
+.flash-banner--transfer {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(255, 251, 235, 0.96);
+}
+
+.flash-banner--request {
+  border-color: rgba(37, 99, 235, 0.3);
+  background: rgba(239, 246, 255, 0.96);
+}
+
+.flash-banner--message {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(236, 253, 245, 0.96);
+}
+
+/* ===========================
+   ERP SHELL STABILIZATION
+   =========================== */
+
+:root {
+  --erp-bg:
+    radial-gradient(circle at 8% 5%, rgba(34, 197, 94, 0.08), transparent 24%),
+    radial-gradient(circle at 92% 8%, rgba(37, 99, 235, 0.1), transparent 28%),
+    linear-gradient(180deg, #eef4f9 0%, #e3ecf4 100%);
+}
+
+html,
+body,
+#root {
+  height: auto;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  font-family: "Segoe UI Variable", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: var(--erp-bg);
+}
+
+.app-shell {
+  min-height: 100vh;
+  height: auto;
+  padding: 1rem;
+  display: grid;
+  grid-template-columns: 16.5rem minmax(0, 1fr);
+  gap: 1rem;
+  overflow: visible;
+  align-items: start;
+}
+
+.app-shell__sidebar {
+  height: auto;
+  max-height: none;
+  position: relative;
+  top: auto;
+  overflow: visible;
+}
+
+.app-shell__sidebar-body {
+  min-height: 0;
+  overflow: visible;
+}
+
+.app-shell__main {
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: start;
+  gap: 1rem;
+  overflow: visible;
+}
+
+.app-shell__content {
+  min-height: 0;
+  overflow: visible;
+  border-radius: 1.5rem;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.app-shell__topbar {
+  border-radius: 1.5rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 249, 255, 0.92));
+}
+
+.inventory-card,
+.inventory-panel,
+.module-placeholder {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.data-table th {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+@media (max-width: 1100px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    padding: 0.9rem;
+  }
+
+  .app-shell__sidebar {
+    position: fixed;
+    z-index: 120;
+    top: 0;
+    left: 0;
+    width: min(17rem, 84vw);
+    height: 100vh;
+    border-radius: 0 1.4rem 1.4rem 0;
+    transform: translateX(-110%);
+    transition: transform 200ms ease;
+  }
+
+  .app-shell--sidebar-open .app-shell__sidebar {
+    transform: translateX(0);
+  }
+
+  .app-shell__overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 110;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(2px);
+  }
+
+  .app-shell__main {
+    height: auto;
   }
 }

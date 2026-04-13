@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import BrandMark from "../components/BrandMark";
-import { createIssue, fetchAlerts, fetchRequests, markAlertAsRead } from "../services/api";
-import { disconnectSocket, getSocket } from "../services/socket";
+import { LOCATION_CONTEXT_EVENT } from "../hooks/useActiveLocation";
 import {
-  buildRequestNotifications,
-  dismissRequestNotificationKeys,
-  getDismissedRequestNotificationKeys,
-  REQUEST_NOTIFICATION_STATE_EVENT,
-  REQUEST_REFRESH_EVENT
-} from "../utils/requestNotifications";
+  createIssue,
+  fetchLocations,
+  fetchNotifications,
+  markAllNotificationsAsRead,
+  setNotificationReadState
+} from "../services/api";
+import { disconnectSocket, getSocket, refreshSocketAuth } from "../services/socket";
 import { hasAllowedRole, normalizeRoleName, readStoredUser } from "../utils/auth";
 
 const LIVE_UPDATE_EVENT = "inventory-live-update";
@@ -59,7 +59,7 @@ const navSections = [
       {
         path: "/movements",
         label: "Stock Movements",
-        description: "Track stock in, out, and adjustments",
+        description: "Track stock in, out, and transfers",
         icon: "movements"
       }
     ]
@@ -164,6 +164,33 @@ function buildNavTarget(item) {
   };
 }
 
+function normalizeNotificationType(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function notificationTargetPath(notificationType) {
+  const type = normalizeNotificationType(notificationType);
+
+  if (type === "REQUEST") {
+    return "/requests";
+  }
+
+  if (type === "MESSAGE") {
+    return "/messages";
+  }
+
+  if (type === "TRANSFER") {
+    return "/movements";
+  }
+
+  return "/dashboard";
+}
+
+function readStoredActiveLocation() {
+  const raw = localStorage.getItem("inventory-active-location-id");
+  return raw && /^\d+$/.test(String(raw)) ? String(raw) : "";
+}
+
 function SidebarIcon({ name }) {
   switch (name) {
     case "dashboard":
@@ -254,24 +281,228 @@ function DashboardLayout({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const currentUser = readStoredUser();
+  const normalizedRole = normalizeRoleName(currentUser.role_name);
+  const activeMasterTab = getActiveMasterDataTab(location.search);
   const userName = localStorage.getItem("inventory-user") || "Store User";
   const currentRole = formatRoleLabel(currentUser.role_name);
-  const activeMasterTab = getActiveMasterDataTab(location.search);
 
+  const [notifications, setNotifications] = useState([]);
+  const [locations, setLocations] = useState([]);
+  const [notificationTypeFilter, setNotificationTypeFilter] = useState("ALL");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [showNotificationCenter, setShowNotificationCenter] = useState(false);
+  const [flashQueue, setFlashQueue] = useState([]);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const [showContactModal, setShowContactModal] = useState(false);
   const [issueTitle, setIssueTitle] = useState("");
   const [issueMessage, setIssueMessage] = useState("");
   const [issueRelatedReport, setIssueRelatedReport] = useState("");
   const [issueSubmitting, setIssueSubmitting] = useState(false);
   const [issueFeedback, setIssueFeedback] = useState({ type: "", message: "" });
-  const [requests, setRequests] = useState([]);
-  const [alerts, setAlerts] = useState([]);
-  const [dismissedKeys, setDismissedKeys] = useState(() =>
-    getDismissedRequestNotificationKeys(currentUser.id)
+  const [activeLocationId, setActiveLocationId] = useState(() => {
+    const stored = readStoredActiveLocation();
+    return stored || String(currentUser.location_id || "");
+  });
+
+  const canSwitchLocation = normalizedRole === "admin" || normalizedRole === "superadmin";
+
+  useEffect(() => {
+    if (!activeLocationId && currentUser.location_id) {
+      setActiveLocationId(String(currentUser.location_id));
+    }
+  }, [activeLocationId, currentUser.location_id]);
+
+  useEffect(() => {
+    if (activeLocationId) {
+      localStorage.setItem("inventory-active-location-id", String(activeLocationId));
+    } else {
+      localStorage.removeItem("inventory-active-location-id");
+    }
+    window.dispatchEvent(new Event(LOCATION_CONTEXT_EVENT));
+    refreshSocketAuth();
+  }, [activeLocationId]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadContextData() {
+      try {
+        const [locationData, notificationData] = await Promise.all([
+          fetchLocations(),
+          fetchNotifications({ limit: 80 })
+        ]);
+
+        if (!active) {
+          return;
+        }
+
+        setLocations(Array.isArray(locationData) ? locationData : []);
+        setNotifications(Array.isArray(notificationData) ? notificationData : []);
+      } catch (error) {
+        console.error("Failed to load layout context", error);
+      }
+    }
+
+    void loadContextData();
+    const intervalId = window.setInterval(loadContextData, 30000);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [activeLocationId]);
+
+  useEffect(() => {
+    const socket = getSocket();
+
+    function handleNotification(notification) {
+      setNotifications((current) => {
+        const exists = current.some(
+          (entry) =>
+            notification.id && entry.id
+              ? String(entry.id) === String(notification.id)
+              : entry.reference_id === notification.reference_id &&
+                entry.type === notification.type &&
+                entry.event_type === notification.event_type &&
+                entry.message === notification.message
+        );
+
+        if (exists) {
+          return current;
+        }
+
+        return [
+          {
+            ...notification,
+            id: notification.id ?? `${notification.type}-${notification.reference_id}-${Date.now()}`,
+            is_read: notification.is_read === true
+          },
+          ...current
+        ];
+      });
+
+      const flashId = `${notification.type}-${notification.reference_id}-${Date.now()}`;
+      setFlashQueue((current) => [
+        ...current,
+        {
+          id: flashId,
+          ...notification
+        }
+      ]);
+      window.setTimeout(() => {
+        setFlashQueue((current) => current.filter((entry) => entry.id !== flashId));
+      }, 5000);
+
+      window.dispatchEvent(new Event(LIVE_UPDATE_EVENT));
+    }
+
+    socket.on("notification", handleNotification);
+
+    return () => {
+      socket.off("notification", handleNotification);
+    };
+  }, []);
+
+  useEffect(() => {
+    setIsSidebarOpen(false);
+    setShowNotificationCenter(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    function handleWindowScroll() {
+      setShowBackToTop(window.scrollY > 280);
+    }
+
+    handleWindowScroll();
+    window.addEventListener("scroll", handleWindowScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleWindowScroll);
+  }, []);
+
+  const filteredNotifications = useMemo(() => {
+    if (notificationTypeFilter === "ALL") {
+      return notifications;
+    }
+
+    return notifications.filter(
+      (notification) => normalizeNotificationType(notification.type) === notificationTypeFilter
+    );
+  }, [notificationTypeFilter, notifications]);
+
+  const unreadCount = useMemo(
+    () => notifications.filter((notification) => !notification.is_read).length,
+    [notifications]
   );
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [showBackToTop, setShowBackToTop] = useState(false);
-  const [showContactModal, setShowContactModal] = useState(false);
-  const [showNotificationCenter, setShowNotificationCenter] = useState(false);
+
+  const unreadRequests = useMemo(
+    () =>
+      notifications.filter(
+        (notification) =>
+          !notification.is_read && normalizeNotificationType(notification.type) === "REQUEST"
+      ).length,
+    [notifications]
+  );
+
+  const visibleNavSections = useMemo(
+    () =>
+      navSections
+        .map((section) => ({
+          ...section,
+          items: section.items.filter((item) => hasAllowedRole(currentUser, item.allowedRoles))
+        }))
+        .filter((section) => section.items.length > 0),
+    [currentUser]
+  );
+
+  const currentNavItem = useMemo(
+    () =>
+      visibleNavSections
+        .flatMap((section) => section.items)
+        .find((item) => isNavItemActive(item, location.pathname, activeMasterTab)) ||
+      visibleNavSections[0]?.items[0] ||
+      navSections[0].items[0],
+    [activeMasterTab, location.pathname, visibleNavSections]
+  );
+
+  const selectedLocationName = useMemo(() => {
+    return (
+      locations.find((entry) => String(entry.id) === String(activeLocationId))?.name ||
+      "No active location"
+    );
+  }, [activeLocationId, locations]);
+
+  async function handleMarkNotificationRead(notificationId, nextReadState = true) {
+    try {
+      await setNotificationReadState(notificationId, nextReadState);
+      setNotifications((current) =>
+        current.map((entry) =>
+          String(entry.id) === String(notificationId)
+            ? { ...entry, is_read: Boolean(nextReadState) }
+            : entry
+        )
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async function handleMarkAllNotificationsRead() {
+    try {
+      await markAllNotificationsAsRead(notificationTypeFilter === "ALL" ? "" : notificationTypeFilter);
+      setNotifications((current) =>
+        current.map((entry) => {
+          if (notificationTypeFilter === "ALL") {
+            return { ...entry, is_read: true };
+          }
+
+          return normalizeNotificationType(entry.type) === notificationTypeFilter
+            ? { ...entry, is_read: true }
+            : entry;
+        })
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  }
 
   async function handleSendIssue() {
     if (!issueTitle.trim()) {
@@ -310,171 +541,8 @@ function DashboardLayout({ children }) {
     localStorage.removeItem("token");
     localStorage.removeItem("inventory-user");
     localStorage.removeItem("inventory-user-data");
+    localStorage.removeItem("inventory-active-location-id");
     navigate("/login");
-  }
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadNotifications() {
-      try {
-        const [requestData, alertData] = await Promise.all([fetchRequests(), fetchAlerts()]);
-
-        if (!active) {
-          return;
-        }
-
-        setRequests(requestData.requests || []);
-        setAlerts(Array.isArray(alertData) ? alertData : []);
-      } catch (error) {
-        console.error("Failed to load notification center", error);
-      }
-    }
-
-    function handleRequestRefresh() {
-      void loadNotifications();
-    }
-
-    function handleNotificationStateRefresh() {
-      setDismissedKeys(getDismissedRequestNotificationKeys(currentUser.id));
-    }
-
-    void loadNotifications();
-    const intervalId = window.setInterval(loadNotifications, 30000);
-
-    window.addEventListener(REQUEST_REFRESH_EVENT, handleRequestRefresh);
-    window.addEventListener(REQUEST_NOTIFICATION_STATE_EVENT, handleNotificationStateRefresh);
-
-    return () => {
-      active = false;
-      window.clearInterval(intervalId);
-      window.removeEventListener(REQUEST_REFRESH_EVENT, handleRequestRefresh);
-      window.removeEventListener(REQUEST_NOTIFICATION_STATE_EVENT, handleNotificationStateRefresh);
-    };
-  }, [currentUser.id]);
-
-  useEffect(() => {
-    const socket = getSocket();
-
-    function handleLiveUpdate() {
-      window.dispatchEvent(new Event(REQUEST_REFRESH_EVENT));
-      window.dispatchEvent(new Event(LIVE_UPDATE_EVENT));
-    }
-
-    socket.on("new_message", handleLiveUpdate);
-    socket.on("stock_request_created", handleLiveUpdate);
-    socket.on("stock_request_approved", handleLiveUpdate);
-    socket.on("stock_request_rejected", handleLiveUpdate);
-    socket.on("low_stock_alert", handleLiveUpdate);
-
-    return () => {
-      socket.off("new_message", handleLiveUpdate);
-      socket.off("stock_request_created", handleLiveUpdate);
-      socket.off("stock_request_approved", handleLiveUpdate);
-      socket.off("stock_request_rejected", handleLiveUpdate);
-      socket.off("low_stock_alert", handleLiveUpdate);
-    };
-  }, []);
-
-  useEffect(() => {
-    setShowNotificationCenter(false);
-    setIsSidebarOpen(false);
-  }, [location.pathname]);
-
-  useEffect(() => {
-    function handleWindowScroll() {
-      setShowBackToTop(window.scrollY > 280);
-    }
-
-    handleWindowScroll();
-    window.addEventListener("scroll", handleWindowScroll, { passive: true });
-
-    return () => {
-      window.removeEventListener("scroll", handleWindowScroll);
-    };
-  }, []);
-
-  const requestNotifications = useMemo(
-    () => buildRequestNotifications(requests, currentUser.id, dismissedKeys),
-    [currentUser.id, dismissedKeys, requests]
-  );
-
-  const unreadAlerts = useMemo(
-    () => alerts.filter((alert) => !alert.is_read),
-    [alerts]
-  );
-
-  useEffect(() => {
-    if (location.pathname !== "/requests" || requestNotifications.length === 0) {
-      return;
-    }
-
-    const nextDismissed = dismissRequestNotificationKeys(
-      currentUser.id,
-      requestNotifications.map((notification) => notification.key)
-    );
-    setDismissedKeys(nextDismissed);
-    window.dispatchEvent(new Event(REQUEST_NOTIFICATION_STATE_EVENT));
-  }, [currentUser.id, location.pathname, requestNotifications]);
-
-  const notificationCount = requestNotifications.length + unreadAlerts.length;
-
-  const visibleNavSections = useMemo(
-    () =>
-      navSections
-        .map((section) => ({
-          ...section,
-          items: section.items.filter((item) => hasAllowedRole(currentUser, item.allowedRoles))
-        }))
-        .filter((section) => section.items.length > 0),
-    [currentUser]
-  );
-
-  const currentNavItem = useMemo(
-    () =>
-      visibleNavSections
-        .flatMap((section) => section.items)
-        .find((item) => isNavItemActive(item, location.pathname, activeMasterTab)) ||
-      visibleNavSections[0]?.items[0] ||
-      navSections[0].items[0],
-    [activeMasterTab, location.pathname, visibleNavSections]
-  );
-
-  async function handleResolveAlert(alertId) {
-    try {
-      await markAlertAsRead(alertId);
-      setAlerts((current) =>
-        current.map((alert) =>
-          alert.id === alertId ? { ...alert, is_read: true } : alert
-        )
-      );
-    } catch (error) {
-      console.error(error);
-    }
-  }
-
-  async function handleClearAlerts() {
-    const unreadAlertIds = unreadAlerts.map((alert) => alert.id);
-
-    try {
-      await Promise.all(unreadAlertIds.map((alertId) => markAlertAsRead(alertId)));
-      setAlerts((current) =>
-        current.map((alert) =>
-          unreadAlertIds.includes(alert.id) ? { ...alert, is_read: true } : alert
-        )
-      );
-    } catch (error) {
-      console.error(error);
-    }
-  }
-
-  function handleClearRequests() {
-    const nextDismissed = dismissRequestNotificationKeys(
-      currentUser.id,
-      requestNotifications.map((notification) => notification.key)
-    );
-    setDismissedKeys(nextDismissed);
-    window.dispatchEvent(new Event(REQUEST_NOTIFICATION_STATE_EVENT));
   }
 
   return (
@@ -523,8 +591,8 @@ function DashboardLayout({ children }) {
                       <span className="app-shell__nav-link-content">
                         <span className="app-shell__nav-label">{item.label}</span>
                       </span>
-                      {item.path === "/requests" && requestNotifications.length > 0 ? (
-                        <span className="app-shell__nav-badge">{requestNotifications.length}</span>
+                      {item.path === "/requests" && unreadRequests > 0 ? (
+                        <span className="app-shell__nav-badge">{unreadRequests}</span>
                       ) : null}
                     </Link>
                   );
@@ -566,6 +634,23 @@ function DashboardLayout({ children }) {
           </div>
 
           <div className="app-shell__topbar-actions">
+            {canSwitchLocation ? (
+              <select
+                className="location-context-select"
+                value={activeLocationId}
+                onChange={(event) => setActiveLocationId(event.target.value)}
+              >
+                <option value="">Select Active Location</option>
+                {locations.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="badge-chip">Location: {selectedLocationName}</span>
+            )}
+
             <div className="notification-center">
               <button
                 type="button"
@@ -574,100 +659,88 @@ function DashboardLayout({ children }) {
               >
                 <span className="notification-center__icon">NT</span>
                 <span className="notification-center__label">Notifications</span>
-                <span className="notification-center__count">{notificationCount}</span>
+                <span className="notification-center__count">{unreadCount}</span>
               </button>
 
               {showNotificationCenter ? (
                 <div className="notification-center__panel">
-                  <div className="notification-center__section">
-                    <div className="notification-center__section-header">
-                      <div>
-                        <strong>Requests</strong>
-                        <p>Approval and workflow updates</p>
-                      </div>
+                  <div className="notification-center__section-header">
+                    <div>
+                      <strong>Notification Center</strong>
+                      <p>Requests, messages, and transfers</p>
+                    </div>
+                    <div className="action-row">
+                      <select
+                        className="notification-filter"
+                        value={notificationTypeFilter}
+                        onChange={(event) => setNotificationTypeFilter(event.target.value)}
+                      >
+                        <option value="ALL">All</option>
+                        <option value="REQUEST">Requests</option>
+                        <option value="MESSAGE">Messages</option>
+                        <option value="TRANSFER">Transfers</option>
+                      </select>
                       <button
                         type="button"
                         className="secondary-button secondary-button--small"
-                        onClick={handleClearRequests}
-                        disabled={requestNotifications.length === 0}
+                        onClick={() => void handleMarkAllNotificationsRead()}
+                        disabled={filteredNotifications.length === 0}
                       >
-                        Clear
+                        Mark all read
                       </button>
-                    </div>
-                    <div className="notification-center__feed">
-                      {requestNotifications.length === 0 ? (
-                        <div className="empty-state">No pending request notifications.</div>
-                      ) : (
-                        requestNotifications.slice(0, 5).map((notification) => (
-                          <button
-                            key={notification.key}
-                            type="button"
-                            className="request-notice-card request-notice-card--compact"
-                            onClick={() => {
-                              navigate("/requests");
-                              setShowNotificationCenter(false);
-                            }}
-                          >
-                            <div className="request-notice-card__header">
-                              <div className="request-notice-card__header-main">
-                                <span className={`status-chip status-chip--${notification.status.toLowerCase()}`}>
-                                  {notification.status}
-                                </span>
-                                <strong>{notification.title}</strong>
-                              </div>
-                              <span className="request-notice-card__meta">{notification.meta}</span>
-                            </div>
-                            <p>{notification.message}</p>
-                          </button>
-                        ))
-                      )}
                     </div>
                   </div>
 
-                  <div className="notification-center__section">
-                    <div className="notification-center__section-header">
-                      <div>
-                        <strong>Alerts</strong>
-                        <p>Unread system alerts</p>
-                      </div>
-                      <button
-                        type="button"
-                        className="secondary-button secondary-button--small"
-                        onClick={() => void handleClearAlerts()}
-                        disabled={unreadAlerts.length === 0}
-                      >
-                        Clear
-                      </button>
-                    </div>
-                    <div className="notification-center__feed">
-                      {unreadAlerts.length === 0 ? (
-                        <div className="empty-state">No unread system alerts.</div>
-                      ) : (
-                        unreadAlerts.slice(0, 5).map((alert) => (
-                          <article key={alert.id} className="request-notice-card request-notice-card--compact">
-                            <div className="request-notice-card__header">
-                              <div className="request-notice-card__header-main">
-                                <span className="status-chip status-chip--rejected">Alert</span>
-                                <strong>{alert.title}</strong>
-                              </div>
-                              <span className="request-notice-card__meta">
-                                {new Date(alert.created_at).toLocaleString()}
+                  <div className="notification-center__feed">
+                    {filteredNotifications.length === 0 ? (
+                      <div className="empty-state">No notifications.</div>
+                    ) : (
+                      filteredNotifications.slice(0, 20).map((notification) => (
+                        <article
+                          key={`${notification.id}-${notification.created_at}`}
+                          className={`request-notice-card request-notice-card--compact ${
+                            notification.is_read ? "" : "request-notice-card--active"
+                          }`}
+                        >
+                          <div className="request-notice-card__header">
+                            <div className="request-notice-card__header-main">
+                              <span className="status-chip status-chip--pending">
+                                {normalizeNotificationType(notification.type)}
                               </span>
+                              <strong>{notification.title}</strong>
                             </div>
-                            <p>{alert.message}</p>
-                            <div className="action-row">
-                              <button
-                                type="button"
-                                className="secondary-button secondary-button--small"
-                                onClick={() => void handleResolveAlert(alert.id)}
-                              >
-                                Resolve
-                              </button>
-                            </div>
-                          </article>
-                        ))
-                      )}
-                    </div>
+                            <span className="request-notice-card__meta">
+                              {new Date(notification.created_at).toLocaleString()}
+                            </span>
+                          </div>
+                          <p>{notification.message}</p>
+                          <div className="action-row">
+                            <button
+                              type="button"
+                              className="secondary-button secondary-button--small"
+                              onClick={() => {
+                                navigate(notificationTargetPath(notification.type));
+                                setShowNotificationCenter(false);
+                              }}
+                            >
+                              Open
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary-button secondary-button--small"
+                              onClick={() =>
+                                void handleMarkNotificationRead(
+                                  notification.id,
+                                  !notification.is_read
+                                )
+                              }
+                            >
+                              {notification.is_read ? "Mark unread" : "Mark read"}
+                            </button>
+                          </div>
+                        </article>
+                      ))
+                    )}
                   </div>
                 </div>
               ) : null}
@@ -691,6 +764,20 @@ function DashboardLayout({ children }) {
           {children}
         </section>
       </main>
+
+      <div className="flash-stack">
+        {flashQueue.map((flash) => (
+          <button
+            key={flash.id}
+            type="button"
+            className={`flash-banner flash-banner--${normalizeNotificationType(flash.type).toLowerCase()}`}
+            onClick={() => navigate(notificationTargetPath(flash.type))}
+          >
+            <strong>{flash.title}</strong>
+            <span>{flash.message}</span>
+          </button>
+        ))}
+      </div>
 
       <button
         type="button"

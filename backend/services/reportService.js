@@ -3,32 +3,70 @@ const ExcelJS = require("exceljs");
 const { Parser } = require("json2csv");
 const { query } = require("../config/db");
 const { calculateAverageCost } = require("../utils/averageCost");
-const { toPublicMovementType } = require("../utils/movementTypes");
+const { toPublicMovementType, normalizeIncomingMovementType } = require("../utils/movementTypes");
 const { resolveItemImageFilePath } = require("../utils/itemImage");
+const { resolveReadLocation } = require("../utils/locationContext");
 
 function applyLocationScope(filters, user) {
-  if (user.role_code === "ADMIN" && user.location_id) {
-    return {
-      ...filters,
-      locationId: user.location_id
-    };
-  }
-
-  return filters;
+  return {
+    ...filters,
+    locationId: resolveReadLocation(user, filters.locationId)
+  };
 }
 
 function resolveLocalReportImagePath(imagePath) {
   return resolveItemImageFilePath(imagePath);
 }
 
+function computeMovementDelta(row, locationId = null) {
+  const type = String(row.movement_type || "").toUpperCase();
+  const quantity = Math.abs(Number(row.quantity || 0));
+  const scopedLocationId = Number(locationId || 0);
+
+  if (type === "IN") {
+    return quantity;
+  }
+
+  if (type === "OUT" || type === "MAINTENANCE" || type === "ASSET_ISSUE") {
+    return quantity * -1;
+  }
+
+  if (type === "ADJUSTMENT") {
+    return Number(row.quantity || 0);
+  }
+
+  if (type === "TRANSFER") {
+    const status = String(row.status || "").toUpperCase();
+
+    if (status === "REJECTED") {
+      return 0;
+    }
+
+    if (
+      scopedLocationId &&
+      status === "COMPLETED" &&
+      Number(row.destination_location_id || 0) === scopedLocationId
+    ) {
+      return quantity;
+    }
+
+    return quantity * -1;
+  }
+
+  return Number(row.quantity || 0);
+}
+
 async function getMovementReport(filters, user) {
   const scopedFilters = applyLocationScope(filters, user);
   const conditions = ["1 = 1"];
   const values = [];
+  const normalizedMovementType = scopedFilters.movementType
+    ? normalizeIncomingMovementType(scopedFilters.movementType)
+    : null;
 
   if (scopedFilters.itemId) {
     values.push(scopedFilters.itemId);
-    conditions.push(`sm.item_id = $${values.length}`);
+    conditions.push(`smi.item_id = $${values.length}`);
   }
 
   if (scopedFilters.categoryId) {
@@ -38,7 +76,13 @@ async function getMovementReport(filters, user) {
 
   if (scopedFilters.locationId) {
     values.push(scopedFilters.locationId);
-    conditions.push(`sm.location_id = $${values.length}`);
+    conditions.push(
+      `(
+        sm.location_id = $${values.length}
+        OR sm.source_location_id = $${values.length}
+        OR sm.destination_location_id = $${values.length}
+      )`
+    );
   }
 
   if (scopedFilters.recipientId) {
@@ -46,8 +90,14 @@ async function getMovementReport(filters, user) {
     conditions.push(`sm.recipient_id = $${values.length}`);
   }
 
-  if (scopedFilters.movementType) {
-    values.push(scopedFilters.movementType);
+  if (scopedFilters.movementType && !normalizedMovementType) {
+    const error = new Error("Invalid movement type filter");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (normalizedMovementType) {
+    values.push(normalizedMovementType);
     conditions.push(`sm.movement_type = $${values.length}`);
   }
 
@@ -66,10 +116,11 @@ async function getMovementReport(filters, user) {
       SELECT
         sm.created_at AS date,
         sm.movement_type,
-        sm.quantity,
-        sm.unit_cost,
-        COALESCE(il.quantity, 0) AS delta_quantity,
-        (sm.quantity * sm.unit_cost) AS total_cost,
+        sm.status,
+        sm.source_location_id,
+        sm.destination_location_id,
+        smi.quantity,
+        smi.cost AS unit_cost,
         a.name AS asset,
         supplier.name AS supplier,
         recipient.name AS recipient,
@@ -85,14 +136,14 @@ async function getMovementReport(filters, user) {
         i.image_path AS item_image,
         c.name AS category
       FROM stock_movements sm
-      JOIN items i ON i.id = sm.item_id AND i.is_active = TRUE
+      JOIN stock_movement_items smi ON smi.movement_id = sm.id
+      JOIN items i ON i.id = smi.item_id AND i.is_active = TRUE
       LEFT JOIN categories c ON c.id = i.category_id
       JOIN locations l ON l.id = sm.location_id
       LEFT JOIN store_sections ss ON ss.id = sm.section_id
       LEFT JOIN assets a ON a.id = sm.asset_id
       LEFT JOIN suppliers supplier ON supplier.id = sm.supplier_id
       LEFT JOIN recipients recipient ON recipient.id = sm.recipient_id
-      LEFT JOIN inventory_ledger il ON il.movement_id = sm.id
       JOIN users performer ON performer.id = sm.performed_by
       WHERE ${conditions.join(" AND ")}
       ORDER BY sm.created_at DESC
@@ -104,24 +155,15 @@ async function getMovementReport(filters, user) {
   let scopedItem = null;
 
   if (scopedFilters.itemId) {
-    const balanceValues = [scopedFilters.itemId];
-    let balanceWhere = "WHERE item_id = $1";
-
-    if (scopedFilters.locationId) {
-      balanceValues.push(scopedFilters.locationId);
-      balanceWhere += ` AND location_id = $2`;
-    }
-
-    const stockResult = await query(
-      `
-        SELECT COALESCE(SUM(quantity), 0) AS current_stock
-        FROM inventory_balance
-        ${balanceWhere}
-      `,
-      balanceValues
+    const inventorySnapshot = await getInventoryValue(
+      {
+        itemId: scopedFilters.itemId,
+        categoryId: scopedFilters.categoryId,
+        locationId: scopedFilters.locationId
+      },
+      user
     );
-
-    currentStock = Number(stockResult.rows[0]?.current_stock || 0);
+    currentStock = Number(inventorySnapshot[0]?.current_quantity || 0);
 
     const itemResult = await query(
       `
@@ -158,6 +200,32 @@ async function getMovementReport(filters, user) {
     }
   }
 
+  const movements = movementResult.rows.map((row) => {
+    const deltaQuantity = computeMovementDelta(row, scopedFilters.locationId);
+    const unitCost = Number(row.unit_cost || 0);
+
+    return {
+      ...row,
+      movement_type: toPublicMovementType(row.movement_type),
+      delta_quantity: deltaQuantity,
+      unit_cost: unitCost,
+      total_cost: deltaQuantity * unitCost
+    };
+  });
+
+  const summary = movements.reduce(
+    (accumulator, movement) => ({
+      movement_count: accumulator.movement_count + 1,
+      total_quantity_delta: accumulator.total_quantity_delta + Number(movement.delta_quantity || 0),
+      total_movement_value: accumulator.total_movement_value + Number(movement.total_cost || 0)
+    }),
+    {
+      movement_count: 0,
+      total_quantity_delta: 0,
+      total_movement_value: 0
+    }
+  );
+
   return {
     header: {
       companyName: "Latex Foam Store",
@@ -167,13 +235,8 @@ async function getMovementReport(filters, user) {
       generatedAt: new Date().toISOString()
     },
     item: scopedItem,
-    movements: movementResult.rows.map((row) => ({
-      ...row,
-      movement_type: toPublicMovementType(row.movement_type),
-      delta_quantity: Number(row.delta_quantity || 0),
-      unit_cost: Number(row.unit_cost || 0),
-      total_cost: Number(row.total_cost || 0)
-    }))
+    summary,
+    movements
   };
 }
 
@@ -1164,30 +1227,80 @@ async function getInventoryValue(filters, user) {
 
   const result = await query(
     `
+      WITH movement_contributions AS (
+        SELECT
+          smi.item_id,
+          sm.location_id,
+          CASE
+            WHEN sm.movement_type = 'IN' THEN ABS(smi.quantity)
+            WHEN sm.movement_type IN ('OUT', 'MAINTENANCE', 'ASSET_ISSUE') THEN ABS(smi.quantity) * -1
+            WHEN sm.movement_type = 'ADJUSTMENT' THEN smi.quantity
+            ELSE 0
+          END AS quantity_delta,
+          CASE
+            WHEN sm.movement_type = 'IN' THEN ABS(smi.quantity) * COALESCE(smi.cost, 0)
+            WHEN sm.movement_type = 'ADJUSTMENT' AND smi.quantity > 0 THEN ABS(smi.quantity) * COALESCE(smi.cost, 0)
+            ELSE 0
+          END AS inbound_value,
+          CASE
+            WHEN sm.movement_type = 'IN' THEN ABS(smi.quantity)
+            WHEN sm.movement_type = 'ADJUSTMENT' AND smi.quantity > 0 THEN ABS(smi.quantity)
+            ELSE 0
+          END AS inbound_quantity
+        FROM stock_movements sm
+        JOIN stock_movement_items smi ON smi.movement_id = sm.id
+        WHERE sm.movement_type <> 'TRANSFER'
+
+        UNION ALL
+
+        SELECT
+          smi.item_id,
+          sm.source_location_id AS location_id,
+          CASE
+            WHEN sm.status = 'REJECTED' THEN 0
+            ELSE ABS(smi.quantity) * -1
+          END AS quantity_delta,
+          0 AS inbound_value,
+          0 AS inbound_quantity
+        FROM stock_movements sm
+        JOIN stock_movement_items smi ON smi.movement_id = sm.id
+        WHERE sm.movement_type = 'TRANSFER'
+
+        UNION ALL
+
+        SELECT
+          smi.item_id,
+          sm.destination_location_id AS location_id,
+          CASE
+            WHEN sm.status = 'COMPLETED' THEN ABS(smi.quantity)
+            ELSE 0
+          END AS quantity_delta,
+          CASE
+            WHEN sm.status = 'COMPLETED' THEN ABS(smi.quantity) * COALESCE(smi.cost, 0)
+            ELSE 0
+          END AS inbound_value,
+          CASE
+            WHEN sm.status = 'COMPLETED' THEN ABS(smi.quantity)
+            ELSE 0
+          END AS inbound_quantity
+        FROM stock_movements sm
+        JOIN stock_movement_items smi ON smi.movement_id = sm.id
+        WHERE sm.movement_type = 'TRANSFER'
+      )
       SELECT
         i.id,
         i.name,
         i.unit,
         i.image_path AS item_image,
-        COALESCE(balance.current_quantity, 0) AS current_quantity,
-        COALESCE(ledger.total_purchase_value, 0) AS total_purchase_value,
-        COALESCE(ledger.total_quantity_purchased, 0) AS total_quantity_purchased
+        COALESCE(SUM(mc.quantity_delta), 0) AS current_quantity,
+        COALESCE(SUM(mc.inbound_value), 0) AS total_purchase_value,
+        COALESCE(SUM(mc.inbound_quantity), 0) AS total_quantity_purchased
       FROM items i
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(b.quantity), 0) AS current_quantity
-        FROM inventory_balance b
-        WHERE b.item_id = i.id
-          ${locationParamIndex ? `AND b.location_id = $${locationParamIndex}` : ""}
-      ) balance ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT
-          COALESCE(SUM(CASE WHEN il.quantity > 0 THEN il.total_cost ELSE 0 END), 0) AS total_purchase_value,
-          COALESCE(SUM(CASE WHEN il.quantity > 0 THEN il.quantity ELSE 0 END), 0) AS total_quantity_purchased
-        FROM inventory_ledger il
-        WHERE il.item_id = i.id
-          ${locationParamIndex ? `AND il.location_id = $${locationParamIndex}` : ""}
-      ) ledger ON TRUE
+      LEFT JOIN movement_contributions mc
+        ON mc.item_id = i.id
+        ${locationParamIndex ? `AND mc.location_id = $${locationParamIndex}` : ""}
       WHERE ${conditions.join(" AND ")}
+      GROUP BY i.id, i.name, i.unit, i.image_path
       ORDER BY i.name
     `,
     values

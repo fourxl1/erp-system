@@ -33,7 +33,7 @@ async function sendMessage(payload, user) {
     message: payload.message
   });
 
-  await notificationService.notifyNewMessage(message);
+  await notificationService.notifyMessageCreated(message);
   return message;
 }
 

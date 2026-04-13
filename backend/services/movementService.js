@@ -9,6 +9,16 @@ const {
   normalizeIncomingMovementType,
   toPublicMovementType
 } = require("../utils/movementTypes");
+const {
+  toInt,
+  isAdmin,
+  isStaff,
+  isSuperAdmin,
+  resolveWriteLocation,
+  resolveReadLocation,
+  resolveUserActiveLocation,
+  isLocationAccessible
+} = require("../utils/locationContext");
 
 const MOVEMENT_TYPES = new Set([
   "IN",
@@ -27,24 +37,39 @@ function buildError(message, statusCode = 400) {
 }
 
 function isLocationBoundUser(user) {
-  return (user.role_code === "ADMIN" || user.role_code === "STAFF") && user.location_id;
+  return isStaff(user) && user.location_id;
 }
 
 function getScopedLocationId(user, requestedLocationId = null) {
-  if (isLocationBoundUser(user)) {
+  if (isStaff(user)) {
     return Number(user.location_id);
   }
 
-  return requestedLocationId ? Number(requestedLocationId) : requestedLocationId;
+  return (
+    toInt(requestedLocationId) ||
+    resolveUserActiveLocation(user) ||
+    toInt(user.location_id) ||
+    null
+  );
 }
 
 function assertStoreAccess(user, locationId) {
-  if (
-    isLocationBoundUser(user) &&
-    user.location_id &&
-    Number(user.location_id) !== Number(locationId)
-  ) {
+  const scopedLocationId = toInt(locationId);
+
+  if (!scopedLocationId) {
+    return;
+  }
+
+  if (!isLocationAccessible(user, scopedLocationId)) {
     throw buildError("Users can only manage inventory in their assigned store", 403);
+  }
+
+  if (isAdmin(user) || isSuperAdmin(user)) {
+    const activeLocationId = resolveWriteLocation(user, null, { requireLocation: false });
+
+    if (!activeLocationId || Number(activeLocationId) !== Number(scopedLocationId)) {
+      throw buildError("Operation is restricted to the active location context", 403);
+    }
   }
 }
 
@@ -84,8 +109,6 @@ function resolveRequestRoute(request) {
 }
 
 function canViewRequest(user, request) {
-  const route = resolveRequestRoute(request);
-
   if (user.role_code === "SUPERADMIN") {
     return true;
   }
@@ -95,10 +118,7 @@ function canViewRequest(user, request) {
   }
 
   if (user.role_code === "ADMIN") {
-    return (
-      Number(route.destination_location_id) === Number(user.location_id) ||
-      Number(route.source_location_id || route.destination_location_id) === Number(user.location_id)
-    );
+    return true;
   }
 
   return false;
@@ -107,16 +127,17 @@ function canViewRequest(user, request) {
 function canApproveRequest(user, request) {
   const route = resolveRequestRoute(request);
   const approvalLocationId = route.source_location_id || route.destination_location_id;
+  const activeLocationId = resolveUserActiveLocation(user) || toInt(user.location_id);
 
   if (user.role_code === "SUPERADMIN") {
     return true;
   }
 
-  if (user.role_code !== "ADMIN" || !user.location_id) {
+  if (user.role_code !== "ADMIN" || !activeLocationId) {
     return false;
   }
 
-  return Number(approvalLocationId) === Number(user.location_id);
+  return Number(approvalLocationId) === Number(activeLocationId);
 }
 
 function normalizeRequestResponse(request, user) {
@@ -147,6 +168,78 @@ async function validateItem(itemId) {
   }
 
   return item;
+}
+
+async function validateSupplierForLocation(supplierId, locationId) {
+  if (!supplierId) {
+    return null;
+  }
+
+  const supplier = await systemModel.getSupplierById(Number(supplierId));
+
+  if (!supplier) {
+    throw buildError("Supplier not found", 404);
+  }
+
+  if (Number(supplier.location_id) !== Number(locationId)) {
+    throw buildError("Supplier must belong to the active/source location", 400);
+  }
+
+  return supplier;
+}
+
+async function validateRecipientForLocation(recipientId, locationId) {
+  if (!recipientId) {
+    return null;
+  }
+
+  const recipient = await systemModel.getRecipientById(Number(recipientId));
+
+  if (!recipient) {
+    throw buildError("Recipient not found", 404);
+  }
+
+  if (Number(recipient.location_id) !== Number(locationId)) {
+    throw buildError("Recipient must belong to the active/source location", 400);
+  }
+
+  return recipient;
+}
+
+async function validateSectionForLocation(sectionId, locationId) {
+  if (!sectionId) {
+    return null;
+  }
+
+  const section = await systemModel.getSectionById(Number(sectionId));
+
+  if (!section) {
+    throw buildError("Section not found", 404);
+  }
+
+  if (Number(section.location_id) !== Number(locationId)) {
+    throw buildError("Section must belong to the active/source location", 400);
+  }
+
+  return section;
+}
+
+async function validateAssetForLocation(assetId, locationId) {
+  if (!assetId) {
+    return null;
+  }
+
+  const asset = await systemModel.getAssetById(Number(assetId));
+
+  if (!asset) {
+    throw buildError("Asset not found", 404);
+  }
+
+  if (Number(asset.location_id) !== Number(locationId)) {
+    throw buildError("Asset must belong to the active/source location", 400);
+  }
+
+  return asset;
 }
 
 async function validateRequestItems(items) {
@@ -210,6 +303,42 @@ function serializeMovementRecord(record) {
   };
 }
 
+function normalizeMovementItemsField(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function serializeMovementHeader(record, user = null) {
+  const movement = {
+    ...record,
+    movement_type: toPublicMovementType(record.movement_type),
+    items: normalizeMovementItemsField(record.items),
+    status: String(record.status || "").toUpperCase()
+  };
+
+  if (!user) {
+    return movement;
+  }
+
+  return {
+    ...movement,
+    can_confirm: canManageTransferAtDestination(user, movement) && movement.status === "PENDING",
+    can_reject: canManageTransferAtDestination(user, movement) && movement.status === "PENDING"
+  };
+}
+
 async function insertMovementAuditLog(client, userId, action, entityId, details) {
   await client.query(
     `
@@ -231,18 +360,278 @@ async function insertMaintenanceAuditLog(client, userId, action, entityId, detai
 }
 
 async function triggerLowStockAlerts(entries = []) {
-  const uniqueEntries = [...new Map(
-    entries
-      .filter((entry) => entry?.item_id && entry?.location_id)
-      .map((entry) => [
-        `${Number(entry.item_id)}:${Number(entry.location_id)}`,
-        { itemId: Number(entry.item_id), locationId: Number(entry.location_id) }
-      ])
-  ).values()];
+  return entries;
+}
 
-  for (const entry of uniqueEntries) {
-    await notificationService.ensureLowStockAlert(entry.itemId, entry.locationId);
+function normalizeMovementItems(items, movementType) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw buildError("At least one movement item is required");
   }
+
+  const seen = new Set();
+  const normalizedType = String(movementType || "").toUpperCase();
+
+  return items.map((entry, index) => {
+    const itemId = Number(entry.item_id);
+    const quantity = Number(entry.quantity);
+    const cost =
+      entry.cost === undefined || entry.cost === null || String(entry.cost).trim() === ""
+        ? null
+        : Number(entry.cost);
+
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      throw buildError(`movement item at position ${index + 1} has an invalid item_id`);
+    }
+
+    if (seen.has(itemId)) {
+      throw buildError("Duplicate item_id values are not allowed in one movement");
+    }
+
+    seen.add(itemId);
+
+    if (!Number.isFinite(quantity) || quantity === 0) {
+      throw buildError(`movement item at position ${index + 1} must include a non-zero quantity`);
+    }
+
+    if (normalizedType !== "ADJUSTMENT" && quantity < 0) {
+      throw buildError("Negative quantities are only allowed for ADJUSTMENT movements");
+    }
+
+    if (cost !== null && (!Number.isFinite(cost) || cost < 0)) {
+      throw buildError(`movement item at position ${index + 1} has an invalid cost`);
+    }
+
+    return {
+      item_id: itemId,
+      quantity: quantity,
+      cost: cost
+    };
+  });
+}
+
+async function validateMovementItems(items) {
+  await Promise.all(items.map((entry) => validateItem(entry.item_id)));
+}
+
+function resolveItemDelta(item, movementType, phase = "SOURCE") {
+  const normalizedType = String(movementType || "").toUpperCase();
+
+  if (normalizedType === "IN") {
+    return Math.abs(Number(item.quantity));
+  }
+
+  if (normalizedType === "OUT") {
+    return Math.abs(Number(item.quantity)) * -1;
+  }
+
+  if (normalizedType === "TRANSFER") {
+    return phase === "DESTINATION"
+      ? Math.abs(Number(item.quantity))
+      : Math.abs(Number(item.quantity)) * -1;
+  }
+
+  if (normalizedType === "ADJUSTMENT") {
+    return Number(item.quantity);
+  }
+
+  return computeDeltaQuantity(normalizedType, Math.abs(Number(item.quantity)), null, null);
+}
+
+async function assertStockAvailabilityForItems(client, items, locationId, movementType, phase = "SOURCE") {
+  for (const item of items) {
+    const delta = resolveItemDelta(item, movementType, phase);
+    if (delta >= 0) {
+      continue;
+    }
+
+    const current = await movementModel.getBalanceForUpdate(client, item.item_id, locationId);
+    const currentQuantity = Number(current?.quantity || 0);
+
+    if (currentQuantity + delta < 0) {
+      throw buildError("Insufficient stock for one or more movement items");
+    }
+  }
+}
+
+async function applyMovementItemDeltas(
+  client,
+  movement,
+  items,
+  locationId,
+  movementType,
+  phase = "SOURCE"
+) {
+  const affected = [];
+
+  for (const item of items) {
+    const delta = resolveItemDelta(item, movementType, phase);
+    const averageCost = await movementModel.getAverageUnitCost(item.item_id, locationId);
+    const hasExplicitCost = item.cost !== null && item.cost !== undefined;
+    const resolvedUnitCost =
+      movementType === "IN"
+        ? Number(item.cost || 0)
+        : movementType === "ADJUSTMENT"
+          ? (hasExplicitCost ? Number(item.cost) : averageCost)
+          : (hasExplicitCost ? Number(item.cost) : averageCost);
+
+    const balance = await movementModel.upsertBalance(client, item.item_id, locationId, delta);
+
+    if (!balance || Number(balance.quantity) < 0) {
+      throw buildError("Inventory balance cannot become negative");
+    }
+
+    await movementModel.createLedgerEntry(client, {
+      item_id: item.item_id,
+      location_id: locationId,
+      movement_id: movement.id,
+      quantity: delta,
+      unit_cost: resolvedUnitCost,
+      total_cost: delta * resolvedUnitCost,
+      created_at: movement.created_at
+    });
+
+    affected.push({
+      item_id: item.item_id,
+      location_id: locationId
+    });
+  }
+
+  return affected;
+}
+
+function summarizeHeaderLegacyValues(items) {
+  const firstItem = items[0];
+  return {
+    item_id: firstItem.item_id,
+    quantity: Math.abs(Number(firstItem.quantity)),
+    unit_cost: Number(firstItem.cost || 0)
+  };
+}
+
+function canManageTransferAtDestination(user, movement) {
+  if (!movement || String(movement.movement_type || "").toUpperCase() !== "TRANSFER") {
+    return false;
+  }
+
+  if (!isAdmin(user) && !isSuperAdmin(user)) {
+    return false;
+  }
+
+  const activeLocationId = resolveWriteLocation(user, null, { requireLocation: false });
+  if (!activeLocationId) {
+    return false;
+  }
+
+  return Number(activeLocationId) === Number(movement.destination_location_id);
+}
+
+async function recordMovementWithItems(client, payload, user) {
+  const notificationService = require("./notificationService");
+  const movementType = normalizeIncomingMovementType(payload.movement_type);
+
+  if (!MOVEMENT_TYPES.has(movementType)) {
+    throw buildError("Invalid movement type");
+  }
+
+  const normalizedItems = normalizeMovementItems(payload.items, movementType);
+  await validateMovementItems(normalizedItems);
+
+  if (movementType === "IN" && !payload.supplier_id) {
+    throw buildError("supplier_id is required for IN movements");
+  }
+
+  if (movementType === "OUT" && !payload.recipient_id) {
+    throw buildError("recipient_id is required for OUT movements");
+  }
+
+  const sourceLocationId =
+    movementType === "TRANSFER"
+      ? resolveWriteLocation(user, null)
+      : resolveWriteLocation(user, null);
+
+  const destinationLocationId =
+    movementType === "TRANSFER"
+      ? toInt(payload.destination_location_id)
+      : null;
+
+  if (movementType === "TRANSFER" && !destinationLocationId) {
+    throw buildError("destination_location_id is required for TRANSFER movements");
+  }
+
+  if (movementType === "TRANSFER" && Number(sourceLocationId) === Number(destinationLocationId)) {
+    throw buildError("Transfer source and destination cannot be the same");
+  }
+
+  await validateSectionForLocation(payload.section_id, sourceLocationId);
+  await validateAssetForLocation(payload.asset_id, sourceLocationId);
+
+  if (movementType === "IN") {
+    await validateSupplierForLocation(payload.supplier_id, sourceLocationId);
+  }
+
+  if (movementType === "OUT") {
+    await validateRecipientForLocation(payload.recipient_id, sourceLocationId);
+  }
+
+  await assertStockAvailabilityForItems(
+    client,
+    normalizedItems,
+    sourceLocationId,
+    movementType,
+    "SOURCE"
+  );
+
+  const summary = summarizeHeaderLegacyValues(normalizedItems);
+  const movement = await movementModel.createMovementHeader(client, {
+    ...summary,
+    movement_type: movementType,
+    location_id: sourceLocationId,
+    source_location_id: movementType === "TRANSFER" ? sourceLocationId : null,
+    destination_location_id: movementType === "TRANSFER" ? destinationLocationId : null,
+    recipient_id: payload.recipient_id || null,
+    supplier_id: payload.supplier_id || null,
+    section_id: payload.section_id || null,
+    asset_id: payload.asset_id || null,
+    request_id: payload.request_id || null,
+    reference: payload.reference || null,
+    performed_by: payload.performed_by || user.id,
+    created_by: user.id,
+    status: movementType === "TRANSFER" ? "PENDING" : "COMPLETED",
+    created_at: payload.created_at || null
+  });
+
+  const movementItemsPayload = normalizedItems.map((entry) => ({
+    item_id: entry.item_id,
+    quantity: movementType === "ADJUSTMENT" ? entry.quantity : Math.abs(Number(entry.quantity)),
+    cost: entry.cost || 0
+  }));
+  await movementModel.insertMovementItems(
+    client,
+    movement.id,
+    sourceLocationId,
+    movementItemsPayload
+  );
+
+  await applyMovementItemDeltas(
+    client,
+    movement,
+    normalizedItems,
+    sourceLocationId,
+    movementType,
+    "SOURCE"
+  );
+
+  const hydrated = await movementModel.getMovementHeaderById(movement.id, { client });
+
+  await insertMovementAuditLog(client, user.id, `MOVEMENT_${movementType}`, movement.id, {
+    movement_type: movementType,
+    location_id: sourceLocationId,
+    source_location_id: movementType === "TRANSFER" ? sourceLocationId : null,
+    destination_location_id: destinationLocationId,
+    status: movementType === "TRANSFER" ? "PENDING" : "COMPLETED",
+    items: movementItemsPayload.length
+  });
+  return hydrated;
 }
 
 async function prepareSingleMovement(client, payload, user, options = {}) {
@@ -265,6 +654,17 @@ async function prepareSingleMovement(client, payload, user, options = {}) {
 
   if (!quantity || quantity <= 0) {
     throw buildError("Quantity must be greater than zero");
+  }
+
+  await validateSectionForLocation(payload.section_id, payload.location_id);
+  await validateAssetForLocation(payload.asset_id, payload.location_id);
+
+  if (payload.supplier_id) {
+    await validateSupplierForLocation(payload.supplier_id, payload.location_id);
+  }
+
+  if (payload.recipient_id) {
+    await validateRecipientForLocation(payload.recipient_id, payload.location_id);
   }
 
   const balanceBefore =
@@ -317,6 +717,7 @@ async function applySingleMovement(client, payload, user, options = {}) {
     ...payload,
     movement_type: prepared.movementType,
     quantity: prepared.quantity,
+    detail_quantity: prepared.movementType === "ADJUSTMENT" ? prepared.deltaQuantity : prepared.quantity,
     unit_cost: prepared.resolvedUnitCost,
     performed_by: payload.performed_by || user.id
   });
@@ -367,33 +768,112 @@ async function applySingleMovement(client, payload, user, options = {}) {
 }
 
 async function recordMovement(payload, user) {
-  const movement = await withTransaction((client) => applySingleMovement(client, payload, user));
-  await triggerLowStockAlerts([movement]);
+  const normalizedType = normalizeIncomingMovementType(payload.movement_type);
+  const normalizedItems = Array.isArray(payload.items)
+    ? payload.items
+    : payload.item_id
+      ? [
+          {
+            item_id: payload.item_id,
+            quantity:
+              normalizedType === "ADJUSTMENT" && payload.adjustment_direction === "DECREASE"
+                ? Math.abs(Number(payload.quantity || 0)) * -1
+                : Number(payload.quantity || 0),
+            cost: payload.unit_cost
+          }
+        ]
+      : [];
+
+  if (!normalizedType || normalizedItems.length === 0) {
+    throw buildError("movement_type and movement items are required");
+  }
+
+  const movement = await withTransaction((client) =>
+    recordMovementWithItems(
+      client,
+      {
+        ...payload,
+        movement_type: normalizedType,
+        items: normalizedItems
+      },
+      user
+    )
+  );
+
+  if (normalizedType === "TRANSFER") {
+    await notificationService.notifyTransferCreated(
+      movement,
+      movement.source_location_name || "Source",
+      movement.destination_location_name || "Destination"
+    );
+  }
+
   return movement;
 }
 
 async function recordMovementInTransaction(client, payload, user, options = {}) {
-  return applySingleMovement(client, payload, user, options);
+  const normalizedType = normalizeIncomingMovementType(payload.movement_type);
+
+  if (!normalizedType) {
+    throw buildError("Invalid movement type");
+  }
+
+  if (payload.items && Array.isArray(payload.items) && payload.items.length > 0) {
+    return recordMovementWithItems(
+      client,
+      {
+        ...payload,
+        movement_type: normalizedType
+      },
+      user
+    );
+  }
+
+  if (!payload.item_id || payload.quantity === undefined || payload.quantity === null) {
+    throw buildError("item_id and quantity are required");
+  }
+
+  const quantity =
+    normalizedType === "ADJUSTMENT" && payload.adjustment_direction === "DECREASE"
+      ? Math.abs(Number(payload.quantity)) * -1
+      : Number(payload.quantity);
+
+  return recordMovementWithItems(
+    client,
+    {
+      ...payload,
+      movement_type: normalizedType,
+      items: [
+        {
+          item_id: payload.item_id,
+          quantity,
+          cost: payload.unit_cost
+        }
+      ]
+    },
+    user
+  );
 }
 
 async function transferStock(payload, user) {
-  if (!payload.source_location_id || !payload.destination_location_id) {
-    throw buildError("Source and destination locations are required for transfers");
-  }
-
-  if (Number(payload.source_location_id) === Number(payload.destination_location_id)) {
-    throw buildError("Transfer source and destination cannot be the same");
-  }
-
-  if (isLocationBoundUser(user)) {
-    assertStoreAccess(user, payload.source_location_id);
-  }
-
-  const transferResult = await withTransaction((client) =>
-    performTransferInTransaction(client, payload, user)
+  const movement = await recordMovement(
+    {
+      ...payload,
+      movement_type: "TRANSFER",
+      items: payload.items || [
+        {
+          item_id: payload.item_id,
+          quantity: payload.quantity,
+          cost: payload.unit_cost
+        }
+      ]
+    },
+    user
   );
-  await triggerLowStockAlerts([transferResult.outMovement, transferResult.inMovement]);
-  return transferResult;
+
+  return {
+    movement
+  };
 }
 
 async function performTransferInTransaction(client, payload, user, options = {}) {
@@ -429,18 +909,145 @@ async function performTransferInTransaction(client, payload, user, options = {})
   return { outMovement, inMovement };
 }
 
+async function confirmTransfer(transferId, user) {
+  const transfer = await withTransaction(async (client) => {
+    const movement = await movementModel.getMovementHeaderById(transferId, {
+      client,
+      forUpdate: true
+    });
+
+    if (!movement) {
+      throw buildError("Transfer not found", 404);
+    }
+
+    if (String(movement.movement_type || "").toUpperCase() !== "TRANSFER") {
+      throw buildError("Only transfer movements can be confirmed");
+    }
+
+    if (movement.status !== "PENDING") {
+      throw buildError("Only pending transfers can be confirmed");
+    }
+
+    if (!canManageTransferAtDestination(user, movement)) {
+      throw buildError("Only destination admins can confirm this transfer", 403);
+    }
+
+    const movementItems = movement.items || [];
+    await assertStockAvailabilityForItems(
+      client,
+      movementItems,
+      movement.destination_location_id,
+      "TRANSFER",
+      "DESTINATION"
+    );
+
+    await applyMovementItemDeltas(
+      client,
+      movement,
+      movementItems,
+      movement.destination_location_id,
+      "TRANSFER",
+      "DESTINATION"
+    );
+
+    await movementModel.updateMovementStatus(client, transferId, "COMPLETED", {
+      transfer_confirmed_by: user.id,
+      transfer_confirmed_at: new Date()
+    });
+
+    await insertMovementAuditLog(client, user.id, "TRANSFER_CONFIRMED", transferId, {
+      source_location_id: movement.source_location_id,
+      destination_location_id: movement.destination_location_id,
+      items: movementItems.length
+    });
+
+    return movementModel.getMovementHeaderById(transferId, { client });
+  });
+
+  await notificationService.notifyTransferConfirmed(
+    transfer,
+    transfer.source_location_name || "Source",
+    transfer.destination_location_name || "Destination"
+  );
+
+  return transfer;
+}
+
+async function rejectTransfer(transferId, user, reason = null) {
+  const transfer = await withTransaction(async (client) => {
+    const movement = await movementModel.getMovementHeaderById(transferId, {
+      client,
+      forUpdate: true
+    });
+
+    if (!movement) {
+      throw buildError("Transfer not found", 404);
+    }
+
+    if (String(movement.movement_type || "").toUpperCase() !== "TRANSFER") {
+      throw buildError("Only transfer movements can be rejected");
+    }
+
+    if (movement.status !== "PENDING") {
+      throw buildError("Only pending transfers can be rejected");
+    }
+
+    if (!canManageTransferAtDestination(user, movement)) {
+      throw buildError("Only destination admins can reject this transfer", 403);
+    }
+
+    const movementItems = movement.items || [];
+    await applyMovementItemDeltas(
+      client,
+      movement,
+      movementItems,
+      movement.source_location_id,
+      "IN",
+      "SOURCE"
+    );
+
+    await movementModel.updateMovementStatus(client, transferId, "REJECTED", {
+      transfer_confirmed_by: user.id,
+      transfer_confirmed_at: new Date()
+    });
+
+    await insertMovementAuditLog(client, user.id, "TRANSFER_REJECTED", transferId, {
+      source_location_id: movement.source_location_id,
+      destination_location_id: movement.destination_location_id,
+      reason: reason || null,
+      items: movementItems.length
+    });
+
+    return movementModel.getMovementHeaderById(transferId, { client });
+  });
+
+  await notificationService.notifyTransferRejected(
+    transfer,
+    transfer.source_location_name || "Source",
+    transfer.destination_location_name || "Destination"
+  );
+
+  return transfer;
+}
+
 async function getDailyMovements(filters, user) {
-  const scopedFilters = { ...filters };
+  const scopedFilters = {
+    movementType: filters.movementType ? normalizeIncomingMovementType(filters.movementType) : null,
+    locationId: resolveReadLocation(user, filters.locationId),
+    status: filters.status ? String(filters.status).toUpperCase() : null
+  };
 
-  if (filters.movementType) {
-    scopedFilters.movementType = normalizeIncomingMovementType(filters.movementType);
+  if (filters.startDate || filters.endDate) {
+    scopedFilters.startDate = filters.startDate || null;
+    scopedFilters.endDate = filters.endDate || null;
+  } else {
+    const date = filters.date || new Date().toISOString().slice(0, 10);
+    scopedFilters.startDate = `${date}T00:00:00`;
+    scopedFilters.endDate = `${date}T23:59:59.999`;
   }
 
-  if (isLocationBoundUser(user)) {
-    scopedFilters.locationId = user.location_id;
-  }
-
-  return movementModel.listDailyMovements(scopedFilters);
+  const movements = await movementModel.listMovementHeaders(scopedFilters);
+  return movements.map((movement) => serializeMovementHeader(movement, user));
 }
 
 async function listRequestLocations() {
@@ -449,17 +1056,16 @@ async function listRequestLocations() {
 }
 
 async function getMovementHistory(filters, user) {
-  const scopedFilters = { ...filters };
+  const scopedFilters = {
+    locationId: resolveReadLocation(user, filters.locationId),
+    movementType: filters.movementType ? normalizeIncomingMovementType(filters.movementType) : null,
+    startDate: filters.startDate || null,
+    endDate: filters.endDate || null,
+    status: filters.status ? String(filters.status).toUpperCase() : null
+  };
 
-  if (filters.movementType) {
-    scopedFilters.movementType = normalizeIncomingMovementType(filters.movementType);
-  }
-
-  if (isLocationBoundUser(user)) {
-    scopedFilters.locationId = user.location_id;
-  }
-
-  return movementModel.listMovements(scopedFilters);
+  const movements = await movementModel.listMovementHeaders(scopedFilters);
+  return movements.map((movement) => serializeMovementHeader(movement, user));
 }
 
 async function createRequest(payload, user) {
@@ -469,14 +1075,13 @@ async function createRequest(payload, user) {
 
   await validateRequestItems(payload.items);
 
-  const destinationLocationId =
-    user.role_code === "SUPERADMIN"
-      ? Number(payload.location_id || user.location_id || 0) || null
-      : getScopedLocationId(user, payload.location_id);
-  const sourceLocationId = payload.source_location_id;
+  const destinationLocationId = resolveWriteLocation(user, null, {
+    requireLocation: true
+  });
+  const sourceLocationId = toInt(payload.source_location_id);
 
   if (!destinationLocationId) {
-    throw buildError("location_id is required when the requester has no assigned location");
+    throw buildError("Active location context is required to create a stock request");
   }
 
   if (!sourceLocationId) {
@@ -528,7 +1133,7 @@ async function createRequest(payload, user) {
     };
   });
 
-  await notificationService.notifyStockRequestCreated(request);
+  await notificationService.notifyRequestCreated(request);
   return request;
 }
 
@@ -624,7 +1229,7 @@ async function approveRequest(requestId, user, approvalData = {}) {
     };
   });
 
-  await notificationService.notifyStockRequestStatus(approvedRequest, "stock_request_approved");
+  await notificationService.notifyRequestUpdated(approvedRequest, "CONFIRMED");
   await triggerLowStockAlerts(
     approvedRequest.results.flatMap((entry) => {
       if (entry?.outMovement && entry?.inMovement) {
@@ -671,17 +1276,17 @@ async function rejectRequest(requestId, user, reason = null) {
     };
   });
 
-  await notificationService.notifyStockRequestStatus(rejectedRequest, "stock_request_rejected");
+  await notificationService.notifyRequestUpdated(rejectedRequest, "REJECTED");
   return rejectedRequest;
 }
 
 async function listRequests(filters, user) {
   const scopedFilters = { ...filters };
 
-  if (user.role_code === "STAFF") {
+  if (isStaff(user)) {
     scopedFilters.requesterId = user.id;
-  } else if (user.role_code === "ADMIN" && user.location_id) {
-    scopedFilters.accessLocationId = user.location_id;
+  } else if (isAdmin(user) || isSuperAdmin(user)) {
+    scopedFilters.accessLocationId = resolveReadLocation(user, filters.locationId);
   }
 
   const requests = await requestModel.listRequests(scopedFilters);
@@ -716,16 +1321,15 @@ async function logMaintenance(payload, user) {
     throw buildError("Maintenance must include at least one item used");
   }
 
-  if (!payload.location_id) {
-    throw buildError("location_id is required for maintenance logs");
-  }
-
-  assertStoreAccess(user, payload.location_id);
+  const locationId = resolveWriteLocation(user, null, {
+    requireLocation: true
+  });
+  await validateAssetForLocation(payload.asset_id, locationId);
 
   return withTransaction(async (client) => {
     const log = await maintenanceModel.createMaintenanceLog(client, {
       asset_id: payload.asset_id,
-      location_id: payload.location_id,
+      location_id: locationId,
       description: payload.description,
       performed_by: user.id
     });
@@ -733,11 +1337,12 @@ async function logMaintenance(payload, user) {
     const usedItems = [];
 
     for (const item of payload.items_used) {
+      await validateSectionForLocation(item.section_id, locationId);
       const movement = await applySingleMovement(
         client,
         {
           item_id: item.item_id,
-          location_id: payload.location_id,
+          location_id: locationId,
           section_id: item.section_id || null,
           movement_type: "MAINTENANCE",
           quantity: item.quantity,
@@ -770,9 +1375,7 @@ async function logMaintenance(payload, user) {
 async function getMaintenanceHistory(filters, user) {
   const scopedFilters = { ...filters };
 
-  if (isLocationBoundUser(user)) {
-    scopedFilters.locationId = user.location_id;
-  }
+  scopedFilters.locationId = resolveReadLocation(user, filters.locationId);
 
   return maintenanceModel.getMaintenanceHistory(scopedFilters);
 }
@@ -827,9 +1430,10 @@ async function updateMaintenanceRecord(id, payload, user) {
     throw buildError("Maintenance must include at least one item used");
   }
 
-  if (!payload.location_id) {
-    throw buildError("location_id is required for maintenance logs");
-  }
+  const locationId = resolveWriteLocation(user, null, {
+    requireLocation: true
+  });
+  await validateAssetForLocation(payload.asset_id, locationId);
 
   const updatedMaintenance = await withTransaction(async (client) => {
     const existingLog = await maintenanceModel.getMaintenanceLogById(id, {
@@ -842,13 +1446,13 @@ async function updateMaintenanceRecord(id, payload, user) {
     }
 
     assertMaintenanceModificationAccess(user, existingLog);
-    assertStoreAccess(user, payload.location_id);
+    assertStoreAccess(user, locationId);
 
     const { usageEntries, affectedEntries: reversedEntries } = await removeMaintenanceUsageEntries(client, id);
 
     const updatedLog = await maintenanceModel.updateMaintenanceLog(client, id, {
       asset_id: Number(payload.asset_id),
-      location_id: Number(payload.location_id),
+      location_id: Number(locationId),
       description: payload.description
     });
 
@@ -856,11 +1460,12 @@ async function updateMaintenanceRecord(id, payload, user) {
     const createdEntries = [];
 
     for (const item of payload.items_used) {
+      await validateSectionForLocation(item.section_id, locationId);
       const movement = await applySingleMovement(
         client,
         {
           item_id: Number(item.item_id),
-          location_id: Number(payload.location_id),
+          location_id: Number(locationId),
           section_id: item.section_id ? Number(item.section_id) : null,
           movement_type: "MAINTENANCE",
           quantity: Number(item.quantity),
@@ -1034,7 +1639,7 @@ async function updateMovement(id, payload, user) {
 
     const nextPayload = {
       item_id: Number(payload.item_id),
-      location_id: Number(payload.location_id || existingMovement.location_id),
+      location_id: Number(existingMovement.location_id),
       section_id: resolveOptionalRelation(payload.section_id, existingMovement.section_id),
       movement_type: payload.movement_type,
       quantity: Number(payload.quantity),
@@ -1075,6 +1680,7 @@ async function updateMovement(id, payload, user) {
       ...nextPayload,
       movement_type: prepared.movementType,
       quantity: prepared.quantity,
+      detail_quantity: prepared.movementType === "ADJUSTMENT" ? prepared.deltaQuantity : prepared.quantity,
       unit_cost: prepared.resolvedUnitCost
     });
 
@@ -1200,6 +1806,8 @@ module.exports = {
   recordMovement,
   recordMovementInTransaction,
   transferStock,
+  confirmTransfer,
+  rejectTransfer,
   updateMovement,
   deleteMovement,
   getDailyMovements,

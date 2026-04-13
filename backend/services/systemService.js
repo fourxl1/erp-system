@@ -2,6 +2,13 @@ const bcrypt = require("bcryptjs");
 const { query, withTransaction } = require("../config/db");
 const systemModel = require("../models/systemModel");
 const movementService = require("./movementService");
+const {
+  isStaff,
+  isAdmin,
+  isSuperAdmin,
+  resolveWriteLocation,
+  resolveReadLocation
+} = require("../utils/locationContext");
 
 function buildError(message, statusCode = 400) {
   const error = new Error(message);
@@ -10,16 +17,36 @@ function buildError(message, statusCode = 400) {
 }
 
 function isLocationBoundUser(user) {
-  return (user.role_code === "ADMIN" || user.role_code === "STAFF") && user.location_id;
+  return isStaff(user) && user.location_id;
 }
 
 function assertAdminScope(user, locationId) {
-  if (
-    (user.role_code === "ADMIN" || user.role_code === "STAFF") &&
-    user.location_id &&
-    Number(user.location_id) !== Number(locationId)
-  ) {
+  if (isStaff(user) && user.location_id && Number(user.location_id) !== Number(locationId)) {
     throw buildError("Users can only manage their assigned store", 403);
+  }
+
+  if (isAdmin(user) && locationId) {
+    const activeLocationId = resolveWriteLocation(user, null, { requireLocation: false });
+
+    if (!activeLocationId) {
+      throw buildError("Active location context is required for Admin operations", 403);
+    }
+
+    if (Number(activeLocationId) !== Number(locationId)) {
+      throw buildError("Admin operations are restricted to the active location context", 403);
+    }
+  }
+
+  if (isSuperAdmin(user) && locationId) {
+    const activeLocationId = resolveWriteLocation(user, null, { requireLocation: false });
+
+    if (!activeLocationId) {
+      throw buildError("Active location context is required for SuperAdmin operations", 403);
+    }
+
+    if (Number(activeLocationId) !== Number(locationId)) {
+      throw buildError("SuperAdmin operations are restricted to the active location context", 403);
+    }
   }
 }
 
@@ -74,8 +101,10 @@ function assertUserManagementScope(actor, targetRoleName, locationId, existingUs
     return;
   }
 
-  if (!actor.location_id) {
-    throw buildError("Admin user is missing an assigned location", 403);
+  const activeLocationId = resolveWriteLocation(actor, null, { requireLocation: true });
+
+  if (!activeLocationId) {
+    throw buildError("Active location context is required for Admin user management", 403);
   }
 
   if (normalizeRoleName(targetRoleName) !== "staff") {
@@ -86,14 +115,22 @@ function assertUserManagementScope(actor, targetRoleName, locationId, existingUs
     throw buildError("Admins can only manage Staff users", 403);
   }
 
-  if (locationId && Number(locationId) !== Number(actor.location_id)) {
-    throw buildError("Admins can only manage users in their assigned store", 403);
+  if (
+    existingUser &&
+    existingUser.location_id &&
+    Number(existingUser.location_id) !== Number(activeLocationId)
+  ) {
+    throw buildError("Admins can only manage users in their active location context", 403);
+  }
+
+  if (locationId && Number(locationId) !== Number(activeLocationId)) {
+    throw buildError("Admins can only manage users in their active location context", 403);
   }
 }
 
 function assertUserLocationRequirement(roleName, locationId) {
   if (normalizeRoleName(roleName) !== "superadmin" && !locationId) {
-    throw buildError("location_id is required for Admin and Staff users");
+    throw buildError("Active location context is required for Admin and Staff users");
   }
 }
 
@@ -158,19 +195,12 @@ async function updateLocation(id, payload, user) {
 }
 
 async function listSections(locationId, user) {
-  if (locationId) {
-    assertAdminScope(user, locationId);
-  }
-
-  const scopedLocationId = isLocationBoundUser(user) ? user.location_id : locationId;
+  const scopedLocationId = resolveReadLocation(user, locationId);
   return systemModel.listSections(scopedLocationId);
 }
 
 async function createSection(payload, user) {
-  const locationId = payload.location_id || user.location_id;
-  if (!locationId) {
-    throw buildError("location_id is required for store sections");
-  }
+  const locationId = resolveWriteLocation(user, null, { requireLocation: true });
   assertAdminScope(user, locationId);
   const section = await systemModel.createSection({ ...payload, location_id: locationId });
   await systemModel.insertAuditLog(
@@ -190,8 +220,14 @@ async function createSection(payload, user) {
 }
 
 async function updateSection(id, payload, user) {
-  const locationId = payload.location_id || user.location_id;
-  assertAdminScope(user, locationId);
+  const locationId = resolveWriteLocation(user, null, { requireLocation: true });
+  const existingSection = await systemModel.getSectionById(id);
+
+  if (!existingSection) {
+    throw buildError("Section not found", 404);
+  }
+
+  assertAdminScope(user, existingSection.location_id);
   const section = await systemModel.updateSection(id, { ...payload, location_id: locationId });
 
   if (!section) {
@@ -216,15 +252,12 @@ async function updateSection(id, payload, user) {
 }
 
 async function listAssets(locationId, user) {
-  const scopedLocationId = isLocationBoundUser(user) ? user.location_id : locationId;
-  if (scopedLocationId) {
-    assertAdminScope(user, scopedLocationId);
-  }
+  const scopedLocationId = resolveReadLocation(user, locationId);
   return systemModel.listAssets(scopedLocationId);
 }
 
 async function createAsset(payload, user) {
-  const locationId = payload.location_id || user.location_id;
+  const locationId = resolveWriteLocation(user, null, { requireLocation: true });
   assertAdminScope(user, locationId);
   const asset = await systemModel.createAsset({ ...payload, location_id: locationId });
   await systemModel.insertAuditLog(
@@ -245,8 +278,14 @@ async function createAsset(payload, user) {
 }
 
 async function updateAsset(id, payload, user) {
-  const locationId = payload.location_id || user.location_id;
-  assertAdminScope(user, locationId);
+  const locationId = resolveWriteLocation(user, null, { requireLocation: true });
+  const existingAsset = await systemModel.getAssetById(id);
+
+  if (!existingAsset) {
+    throw buildError("Asset not found", 404);
+  }
+
+  assertAdminScope(user, existingAsset.location_id);
   const asset = await systemModel.updateAsset(id, { ...payload, location_id: locationId });
 
   if (!asset) {
@@ -272,10 +311,7 @@ async function updateAsset(id, payload, user) {
 }
 
 async function createInventoryCount(payload, user) {
-  const locationId = isLocationBoundUser(user) ? user.location_id : (payload.location_id || user.location_id);
-  if (!locationId) {
-    throw buildError("location_id is required for inventory counts");
-  }
+  const locationId = resolveWriteLocation(user, null, { requireLocation: true });
   assertAdminScope(user, locationId);
 
   if (!Array.isArray(payload.items) || payload.items.length === 0) {
@@ -325,10 +361,7 @@ async function createInventoryCount(payload, user) {
 }
 
 async function listInventoryCounts(locationId, user) {
-  const scopedLocationId = isLocationBoundUser(user) ? user.location_id : locationId;
-  if (scopedLocationId) {
-    assertAdminScope(user, scopedLocationId);
-  }
+  const scopedLocationId = resolveReadLocation(user, locationId);
 
   const counts = await systemModel.listCounts(scopedLocationId);
 
@@ -393,7 +426,7 @@ async function postInventoryCount(countId, user) {
 }
 
 async function listAlerts(user, locationId) {
-  const scopedLocationId = isLocationBoundUser(user) ? user.location_id : locationId;
+  const scopedLocationId = resolveReadLocation(user, locationId);
   return systemModel.listAlerts(scopedLocationId);
 }
 
@@ -413,8 +446,11 @@ async function listAuditLogs(filters, user) {
   }
 
   const scopedFilters =
-    user.role_code === "ADMIN" && user.location_id
-      ? { ...filters, locationId: user.location_id }
+    user.role_code === "ADMIN"
+      ? {
+          ...filters,
+          locationId: resolveReadLocation(user, filters.locationId)
+        }
       : filters;
 
   return systemModel.listAuditLogs(scopedFilters);
@@ -508,12 +544,17 @@ async function updateUnit(id, payload, user) {
   return unit;
 }
 
-async function listSuppliers() {
-  return systemModel.listSuppliers();
+async function listSuppliers(user, locationId = null) {
+  const scopedLocationId = resolveReadLocation(user, locationId);
+  return systemModel.listSuppliers(scopedLocationId);
 }
 
 async function createSupplier(payload, user) {
-  const supplier = await systemModel.createSupplier(payload);
+  const locationId = resolveWriteLocation(user, null, { requireLocation: true });
+  const supplier = await systemModel.createSupplier({
+    ...payload,
+    location_id: locationId
+  });
   await systemModel.insertAuditLog(
     { query },
     {
@@ -522,7 +563,8 @@ async function createSupplier(payload, user) {
       entity_type: "suppliers",
       entity_id: supplier.id,
       details: {
-        name: supplier.name
+        name: supplier.name,
+        location_id: supplier.location_id
       }
     }
   );
@@ -530,7 +572,19 @@ async function createSupplier(payload, user) {
 }
 
 async function updateSupplier(id, payload, user) {
-  const supplier = await systemModel.updateSupplier(id, payload);
+  const locationId = resolveWriteLocation(user, null, { requireLocation: true });
+  const existingSupplier = await systemModel.getSupplierById(id);
+
+  if (!existingSupplier) {
+    throw buildError("Supplier not found", 404);
+  }
+
+  assertAdminScope(user, existingSupplier.location_id);
+
+  const supplier = await systemModel.updateSupplier(id, {
+    ...payload,
+    location_id: locationId
+  });
 
   if (!supplier) {
     throw buildError("Supplier not found", 404);
@@ -544,7 +598,8 @@ async function updateSupplier(id, payload, user) {
       entity_type: "suppliers",
       entity_id: supplier.id,
       details: {
-        name: supplier.name
+        name: supplier.name,
+        location_id: supplier.location_id
       }
     }
   );
@@ -553,8 +608,16 @@ async function updateSupplier(id, payload, user) {
 }
 
 async function listUsers(user) {
-  const locationId = user.role_code === "ADMIN" ? user.location_id : null;
-  const users = await systemModel.listUsers(locationId);
+  const locationId =
+    user.role_code === "ADMIN" || user.role_code === "SUPERADMIN"
+      ? resolveReadLocation(user, null)
+      : null;
+
+  if (user.role_code === "ADMIN" && !locationId) {
+    throw buildError("Active location context is required for Admin user management", 403);
+  }
+
+  const users = await systemModel.listUsers(locationId || null);
 
   if (user.role_code === "ADMIN") {
     return users.filter((entry) => normalizeRoleName(entry.role_name) === "staff");
@@ -571,7 +634,11 @@ async function createUser(payload, user) {
   }
 
   const resolvedRoleName = userPayload.role_name || "Staff";
-  const resolvedLocationId = user.role_code === "ADMIN" ? user.location_id : userPayload.location_id;
+  const contextLocationId = resolveWriteLocation(user, null, { requireLocation: false });
+  const resolvedLocationId =
+    normalizeRoleName(resolvedRoleName) === "superadmin"
+      ? null
+      : contextLocationId;
   assertUserLocationRequirement(resolvedRoleName, resolvedLocationId);
   assertUserManagementScope(user, resolvedRoleName, resolvedLocationId);
 
@@ -626,10 +693,11 @@ async function updateUser(id, payload, user) {
   }
 
   const resolvedRoleName = userPayload.role_name || existingUser.role_name;
+  const contextLocationId = resolveWriteLocation(user, null, { requireLocation: false });
   const resolvedLocationId =
-    user.role_code === "ADMIN"
-      ? user.location_id
-      : (userPayload.location_id === null ? null : userPayload.location_id) ?? existingUser.location_id;
+    normalizeRoleName(resolvedRoleName) === "superadmin"
+      ? null
+      : contextLocationId;
 
   assertUserLocationRequirement(resolvedRoleName, resolvedLocationId);
   assertUserManagementScope(user, resolvedRoleName, resolvedLocationId, existingUser);
@@ -675,7 +743,8 @@ async function updateUser(id, payload, user) {
 }
 
 async function listRecipients(locationId, user) {
-  return (await systemModel.listRecipients()).map(toRecipientResponse);
+  const scopedLocationId = resolveReadLocation(user, locationId);
+  return (await systemModel.listRecipients(scopedLocationId)).map(toRecipientResponse);
 }
 
 async function createRecipient(payload, user) {
@@ -685,7 +754,11 @@ async function createRecipient(payload, user) {
     throw buildError("name is required for recipients");
   }
 
-  const recipient = await systemModel.createRecipient(recipientPayload);
+  const locationId = resolveWriteLocation(user, null, { requireLocation: true });
+  const recipient = await systemModel.createRecipient({
+    ...recipientPayload,
+    location_id: locationId
+  });
 
   await systemModel.insertAuditLog(
     { query },
@@ -696,7 +769,8 @@ async function createRecipient(payload, user) {
       entity_id: recipient.id,
       details: {
         name: recipient.name,
-        department: recipient.department
+        department: recipient.department,
+        location_id: recipient.location_id
       }
     }
   );
@@ -711,7 +785,19 @@ async function updateRecipient(id, payload, user) {
     throw buildError("name is required for recipients");
   }
 
-  const recipient = await systemModel.updateRecipient(id, recipientPayload);
+  const locationId = resolveWriteLocation(user, null, { requireLocation: true });
+  const existingRecipient = await systemModel.getRecipientById(id);
+
+  if (!existingRecipient) {
+    throw buildError("Recipient not found", 404);
+  }
+
+  assertAdminScope(user, existingRecipient.location_id);
+
+  const recipient = await systemModel.updateRecipient(id, {
+    ...recipientPayload,
+    location_id: locationId
+  });
 
   if (!recipient) {
     throw buildError("Recipient not found", 404);
@@ -726,7 +812,8 @@ async function updateRecipient(id, payload, user) {
       entity_id: recipient.id,
       details: {
         name: recipient.name,
-        department: recipient.department
+        department: recipient.department,
+        location_id: recipient.location_id
       }
     }
   );
@@ -752,7 +839,7 @@ async function deleteMasterData(table, id, user) {
     throw buildError("Only SuperAdmin can delete locations", 403);
   }
 
-  if (table === "store_sections" && user.role_code === "ADMIN") {
+  if (table === "store_sections" && (user.role_code === "ADMIN" || user.role_code === "SUPERADMIN")) {
     const section = await systemModel.getSectionById(id);
 
     if (!section) {
@@ -762,7 +849,7 @@ async function deleteMasterData(table, id, user) {
     assertAdminScope(user, section.location_id);
   }
 
-  if (table === "assets" && user.role_code === "ADMIN") {
+  if (table === "assets" && (user.role_code === "ADMIN" || user.role_code === "SUPERADMIN")) {
     const asset = await systemModel.getAssetById(id);
 
     if (!asset) {
@@ -772,7 +859,27 @@ async function deleteMasterData(table, id, user) {
     assertAdminScope(user, asset.location_id);
   }
 
+  if (table === "suppliers" && (user.role_code === "ADMIN" || user.role_code === "SUPERADMIN")) {
+    const supplier = await systemModel.getSupplierById(id);
+
+    if (!supplier) {
+      throw buildError("SUPPLIER not found", 404);
+    }
+
+    assertAdminScope(user, supplier.location_id);
+  }
+
   if (table === "recipients") {
+    const existingRecipient = await systemModel.getRecipientById(id);
+
+    if (!existingRecipient) {
+      throw buildError("Recipient not found", 404);
+    }
+
+    if (user.role_code === "ADMIN" || user.role_code === "SUPERADMIN") {
+      assertAdminScope(user, existingRecipient.location_id);
+    }
+
     const recipient = await systemModel.deleteEntity("recipients", id);
 
     if (!recipient) {

@@ -1,48 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DashboardLayout from "../layouts/DashboardLayout";
+import { useActiveLocationId } from "../hooks/useActiveLocation";
 import ItemIdentity from "../components/ItemIdentity";
+import SortHeader from "../components/SortHeader";
+import TablePagination from "../components/TablePagination";
+import useSortedPagination from "../hooks/useSortedPagination";
 import {
-  createInventoryCount,
-  deleteStockMovement,
+  confirmTransfer,
   createStockMovement,
-  fetchAssets,
   fetchDailyMovements,
   fetchItems,
   fetchLocations,
   fetchRecipients,
-  fetchSections,
   fetchSuppliers,
-  postInventoryCount,
-  updateStockMovement
+  rejectTransfer
 } from "../services/api";
 import { formatMovementType, MOVEMENT_TYPE_OPTIONS } from "../utils/movementTypes";
 
-function readStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem("inventory-user-data") || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function normalizeRoleName(roleName) {
-  return String(roleName || "").trim().toLowerCase();
-}
-
-function toDateTimeInputValue(value) {
-  if (!value) {
-    return "";
-  }
-
-  const parsed = new Date(value);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return "";
-  }
-
-  const localTime = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
-  return localTime.toISOString().slice(0, 16);
-}
+const LIVE_UPDATE_EVENT = "inventory-live-update";
 
 function getTodayDateValue() {
   const today = new Date();
@@ -50,331 +25,268 @@ function getTodayDateValue() {
   return localDate.toISOString().slice(0, 10);
 }
 
-function createEmptyMovementForm(fixedLocationId = "") {
+function createEmptyMovementItem() {
   return {
     item_id: "",
-    movement_type: "STOCK_IN",
-    location_id: fixedLocationId,
-    source_location_id: fixedLocationId,
-    destination_location_id: "",
-    section_id: "",
-    asset_id: "",
-    recipient_id: "",
-    supplier_id: "",
-    adjustment_direction: "INCREASE",
     quantity: "",
-    unit_cost: "",
-    reference: "",
-    created_at: ""
+    cost: ""
   };
 }
 
-function StockMovements() {
-  const currentUser = readStoredUser();
-  const currentRole = normalizeRoleName(currentUser.role_name);
-  const fixedLocationId =
-    currentRole === "superadmin" ? "" : String(currentUser.location_id || "");
-  const isLocationBound = Boolean(fixedLocationId);
-  const canEditMovements = currentRole === "admin" || currentRole === "superadmin";
-  const canPostCounts = currentRole === "admin" || currentRole === "superadmin";
+function createEmptyForm() {
+  return {
+    movement_type: "IN",
+    destination_location_id: "",
+    supplier_id: "",
+    recipient_id: "",
+    reference: "",
+    items: [createEmptyMovementItem()]
+  };
+}
 
+function getStatusLabel(movement) {
+  const type = String(movement.movement_type || "").toUpperCase();
+  const status = String(movement.status || "").toUpperCase();
+
+  if (type !== "TRANSFER") {
+    return status || "COMPLETED";
+  }
+
+  if (status === "PENDING") {
+    return "Not Received";
+  }
+
+  if (status === "COMPLETED") {
+    return "Received";
+  }
+
+  if (status === "REJECTED") {
+    return "Rejected";
+  }
+
+  return status;
+}
+
+function getMovementRouteLabel(movement) {
+  if (movement.source_location_name && movement.destination_location_name) {
+    return `${movement.source_location_name} -> ${movement.destination_location_name}`;
+  }
+
+  return movement.location_name || "-";
+}
+
+function StockMovements() {
+  const activeLocationId = useActiveLocationId();
   const [items, setItems] = useState([]);
-  const [movements, setMovements] = useState([]);
   const [locations, setLocations] = useState([]);
-  const [sections, setSections] = useState([]);
-  const [assets, setAssets] = useState([]);
   const [recipients, setRecipients] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
-  const [dailyFilters, setDailyFilters] = useState(() => ({
-    start_date: getTodayDateValue(),
-    end_date: getTodayDateValue(),
-    location_id: fixedLocationId,
-    movement_type: ""
-  }));
+  const [movements, setMovements] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [editingMovementId, setEditingMovementId] = useState(null);
-  const [formData, setFormData] = useState(() => createEmptyMovementForm(fixedLocationId));
-  const [countData, setCountData] = useState({
-    location_id: fixedLocationId,
-    item_id: "",
-    counted_quantity: ""
+  const [formData, setFormData] = useState(createEmptyForm);
+  const [filters, setFilters] = useState({
+    start_date: getTodayDateValue(),
+    end_date: getTodayDateValue(),
+    movement_type: "",
+    status: ""
   });
 
-  const itemScopeLocationId = useMemo(() => {
-    if (formData.movement_type === "TRANSFER") {
-      return formData.source_location_id || fixedLocationId;
-    }
-
-    return formData.location_id || fixedLocationId;
-  }, [fixedLocationId, formData.location_id, formData.movement_type, formData.source_location_id]);
-
-  const selectedLocationName = useMemo(
-    () => locations.find((location) => String(location.id) === String(fixedLocationId))?.name || "Assigned Store",
-    [fixedLocationId, locations]
-  );
-
-  const loadReferences = useCallback(async (activeLocationId = "") => {
+  const loadReferences = useCallback(async () => {
     try {
-      const itemParams = activeLocationId ? { location_id: activeLocationId } : {};
-      const assetLocationId = activeLocationId || fixedLocationId;
-      const [itemData, locationData, assetData, recipientData, supplierData] = await Promise.all([
-        fetchItems(itemParams),
+      const [itemData, locationData, recipientData, supplierData] = await Promise.all([
+        fetchItems(),
         fetchLocations(),
-        fetchAssets(assetLocationId ? Number(assetLocationId) : undefined),
         fetchRecipients(),
         fetchSuppliers()
       ]);
 
       setItems(itemData.items || []);
       setLocations(Array.isArray(locationData) ? locationData : []);
-      setAssets(Array.isArray(assetData) ? assetData : []);
       setRecipients(Array.isArray(recipientData) ? recipientData : []);
       setSuppliers(Array.isArray(supplierData) ? supplierData : []);
-      setError("");
     } catch (loadError) {
-      console.error("Failed to load movement references", loadError);
       setError(loadError.message || "Failed to load movement references");
-    }
-  }, [fixedLocationId]);
-
-  const loadDailyMovements = useCallback(async (selectedFilters = {}) => {
-    try {
-      const data = await fetchDailyMovements(selectedFilters);
-      setMovements(Array.isArray(data) ? data : []);
-    } catch (loadError) {
-      console.error("Failed to load daily movements", loadError);
-      setMovements([]);
-      setError(loadError.message || "Failed to load daily movements");
     }
   }, []);
 
-  useEffect(() => {
-    void loadReferences(itemScopeLocationId);
-  }, [itemScopeLocationId, loadReferences]);
-
-  useEffect(() => {
-    void loadDailyMovements(dailyFilters);
-  }, [dailyFilters, loadDailyMovements]);
-
-  useEffect(() => {
-    if (!editingMovementId) {
-      setFormData((current) => ({
-        ...current,
-        location_id: fixedLocationId || current.location_id,
-        source_location_id: fixedLocationId || current.source_location_id
-      }));
-      setCountData((current) => ({
-        ...current,
-        location_id: fixedLocationId || current.location_id
-      }));
+  const loadMovements = useCallback(async (activeFilters = filters) => {
+    try {
+      const data = await fetchDailyMovements(activeFilters);
+      setMovements(Array.isArray(data) ? data : []);
+      setError("");
+    } catch (loadError) {
+      setError(loadError.message || "Failed to load movements");
+      setMovements([]);
     }
-  }, [editingMovementId, fixedLocationId]);
+  }, [filters]);
 
   useEffect(() => {
-    const sectionLocationId =
-      formData.movement_type === "TRANSFER"
-        ? formData.source_location_id || fixedLocationId
-        : formData.location_id || fixedLocationId;
+    void loadReferences();
+  }, [activeLocationId, loadReferences]);
 
-    if (!sectionLocationId) {
-      setSections([]);
-      return;
+  useEffect(() => {
+    void loadMovements(filters);
+  }, [activeLocationId, filters, loadMovements]);
+
+  useEffect(() => {
+    function handleLiveUpdate() {
+      void loadMovements(filters);
     }
 
-    fetchSections(Number(sectionLocationId))
-      .then((data) => setSections(Array.isArray(data) ? data : []))
-      .catch((loadError) => {
-        console.error(loadError);
-        setSections([]);
-      });
-  }, [fixedLocationId, formData.location_id, formData.movement_type, formData.source_location_id]);
+    window.addEventListener(LIVE_UPDATE_EVENT, handleLiveUpdate);
+    return () => window.removeEventListener(LIVE_UPDATE_EVENT, handleLiveUpdate);
+  }, [filters, loadMovements]);
 
-  function handleChange(event) {
+  const isTransfer = formData.movement_type === "TRANSFER";
+  const isIn = formData.movement_type === "IN";
+  const isOut = formData.movement_type === "OUT";
+  const isAdjustment = formData.movement_type === "ADJUSTMENT";
+  const movementTable = useSortedPagination(movements, {
+    initialSortKey: "created_at",
+    initialSortDirection: "desc",
+    initialPageSize: 10,
+    getSortValue: (movement, key) => {
+      switch (key) {
+        case "movement_type":
+          return formatMovementType(movement.movement_type);
+        case "status":
+          return getStatusLabel(movement);
+        case "route":
+          return getMovementRouteLabel(movement);
+        case "items_count":
+          return Array.isArray(movement.items) ? movement.items.length : 0;
+        case "reference":
+          return movement.reference;
+        case "created_by_name":
+          return movement.created_by_name;
+        case "created_at":
+          return movement.created_at;
+        default:
+          return movement?.[key];
+      }
+    }
+  });
+  const pagedMovements = movementTable.pagedRows;
+
+  const destinationOptions = useMemo(
+    () =>
+      locations.filter(
+        (entry) => String(entry.id) !== String(activeLocationId)
+      ),
+    [activeLocationId, locations]
+  );
+
+  function handleFormFieldChange(event) {
     const { name, value } = event.target;
-
-    setFormData((current) => {
-      const next = { ...current, [name]: value };
-
-      if (name === "movement_type") {
-        if (value === "TRANSFER") {
-          next.source_location_id = fixedLocationId || current.location_id || "";
-          next.location_id = fixedLocationId || current.location_id || "";
-          next.section_id = "";
-          next.asset_id = "";
-          next.recipient_id = "";
-          next.supplier_id = "";
-        } else {
-          next.location_id = fixedLocationId || current.location_id || "";
-          next.source_location_id = fixedLocationId || current.source_location_id || "";
-          next.destination_location_id = "";
-        }
-      }
-
-      if (name === "location_id") {
-        next.section_id = "";
-        next.asset_id = "";
-      }
-
-      if (name === "source_location_id") {
-        next.section_id = "";
-        next.asset_id = "";
-        if (value === current.destination_location_id) {
-          next.destination_location_id = "";
-        }
-      }
-
-      return next;
-    });
-  }
-
-  function resetMovementForm() {
-    setEditingMovementId(null);
-    setFormData(createEmptyMovementForm(fixedLocationId));
-  }
-
-  function handleDailyFilterChange(event) {
-    const { name, value } = event.target;
-    setDailyFilters((current) => ({
+    setFormData((current) => ({
       ...current,
       [name]: value
     }));
   }
 
-  async function handleSubmit() {
-    if (!formData.item_id || !formData.quantity) {
-      setError("Item and quantity are required");
-      return;
-    }
+  function handleItemChange(index, field, value) {
+    setFormData((current) => ({
+      ...current,
+      items: current.items.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item
+      )
+    }));
+  }
 
-    if (!itemScopeLocationId) {
-      setError("Location is required for this movement");
-      return;
-    }
+  function addMovementItem() {
+    setFormData((current) => ({
+      ...current,
+      items: [...current.items, createEmptyMovementItem()]
+    }));
+  }
 
-    if (
-      formData.movement_type === "TRANSFER" &&
-      (!formData.source_location_id || !formData.destination_location_id)
-    ) {
-      setError("Source and destination locations are required for transfers");
-      return;
-    }
-
-    try {
-      setLoading(true);
-
-      const payload = {
-        ...formData,
-        location_id:
-          formData.movement_type === "TRANSFER"
-            ? undefined
-            : (isLocationBound ? Number(fixedLocationId) : Number(formData.location_id)),
-        source_location_id:
-          formData.movement_type === "TRANSFER"
-            ? Number(formData.source_location_id || fixedLocationId)
-            : undefined,
-        destination_location_id:
-          formData.movement_type === "TRANSFER" && formData.destination_location_id
-            ? Number(formData.destination_location_id)
-            : undefined,
-        section_id: formData.section_id ? Number(formData.section_id) : undefined,
-        asset_id: formData.asset_id ? Number(formData.asset_id) : undefined,
-        recipient_id: formData.recipient_id ? Number(formData.recipient_id) : undefined,
-        supplier_id: formData.supplier_id ? Number(formData.supplier_id) : undefined,
-        quantity: Number(formData.quantity),
-        unit_cost: formData.unit_cost ? Number(formData.unit_cost) : undefined
+  function removeMovementItem(index) {
+    setFormData((current) => {
+      const nextItems = current.items.filter((_, itemIndex) => itemIndex !== index);
+      return {
+        ...current,
+        items: nextItems.length > 0 ? nextItems : [createEmptyMovementItem()]
       };
-
-      if (editingMovementId) {
-        await updateStockMovement(editingMovementId, payload);
-      } else {
-        await createStockMovement(payload);
-      }
-
-      resetMovementForm();
-      setError("");
-      await loadDailyMovements(dailyFilters);
-    } catch (actionError) {
-      console.error(actionError);
-      setError(actionError.message || "Failed to record stock movement");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function handleEditMovement(movement) {
-    if (!canEditMovements || !movement.can_modify) {
-      return;
-    }
-
-    setEditingMovementId(movement.id);
-    setFormData({
-      item_id: String(movement.item_id || ""),
-      movement_type: movement.movement_type || "STOCK_IN",
-      location_id: isLocationBound ? fixedLocationId : String(movement.location_id || ""),
-      source_location_id: isLocationBound ? fixedLocationId : String(movement.source_location_id || ""),
-      destination_location_id: String(movement.destination_location_id || ""),
-      section_id: String(movement.section_id || ""),
-      asset_id: String(movement.asset_id || ""),
-      recipient_id: String(movement.recipient_id || ""),
-      supplier_id: String(movement.supplier_id || ""),
-      adjustment_direction: movement.adjustment_direction || "INCREASE",
-      quantity: String(movement.quantity || ""),
-      unit_cost:
-        movement.unit_cost === null || movement.unit_cost === undefined ? "" : String(movement.unit_cost),
-      reference: movement.reference || "",
-      created_at: toDateTimeInputValue(movement.timestamp || movement.created_at)
     });
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  async function handleDeleteMovement(id) {
-    if (!window.confirm("Delete this movement and reverse its stock effect?")) {
+  function resetForm() {
+    setFormData(createEmptyForm());
+  }
+
+  async function handleSubmit() {
+    const validItems = formData.items.filter((entry) => entry.item_id && entry.quantity !== "");
+
+    if (validItems.length === 0) {
+      setError("Add at least one item with quantity");
+      return;
+    }
+
+    if (isTransfer && !formData.destination_location_id) {
+      setError("Destination location is required for transfers");
+      return;
+    }
+
+    if (isIn && !formData.supplier_id) {
+      setError("Supplier is required for stock in");
+      return;
+    }
+
+    if (isOut && !formData.recipient_id) {
+      setError("Recipient is required for stock out");
       return;
     }
 
     try {
       setLoading(true);
-      await deleteStockMovement(id);
-      setError("");
-      await loadDailyMovements(dailyFilters);
+      await createStockMovement({
+        movement_type: formData.movement_type,
+        
+       ...(isTransfer && {
+  destination_location_id: Number(formData.destination_location_id)
+}),
+        supplier_id: isIn ? Number(formData.supplier_id) : undefined,
+        recipient_id: isOut ? Number(formData.recipient_id) : undefined,
+        reference: formData.reference || undefined,
+        items: validItems.map((entry) => ({
+          item_id: Number(entry.item_id),
+          quantity: Number(entry.quantity),
+          cost: entry.cost === "" ? undefined : Number(entry.cost)
+        }))
+      });
+
+      resetForm();
+      await loadMovements(filters);
+      window.dispatchEvent(new Event(LIVE_UPDATE_EVENT));
     } catch (actionError) {
-      console.error(actionError);
-      setError(actionError.message || "Failed to delete movement");
+      setError(actionError.message || "Failed to record movement");
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleCountSubmit() {
-    if (!countData.location_id || !countData.item_id || countData.counted_quantity === "") {
-      setError("Location, item, and counted quantity are required");
-      return;
-    }
-
+  async function handleConfirmTransfer(id) {
     try {
       setLoading(true);
-      const count = await createInventoryCount({
-        location_id: Number(countData.location_id),
-        items: [
-          {
-            item_id: Number(countData.item_id),
-            counted_quantity: Number(countData.counted_quantity)
-          }
-        ]
-      });
-
-      await postInventoryCount(count.count.id);
-      setCountData({
-        location_id: fixedLocationId,
-        item_id: "",
-        counted_quantity: ""
-      });
-      setError("");
-      await loadDailyMovements(dailyFilters);
+      await confirmTransfer(id);
+      await loadMovements(filters);
+      window.dispatchEvent(new Event(LIVE_UPDATE_EVENT));
     } catch (actionError) {
-      console.error(actionError);
-      setError(actionError.message || "Failed to post inventory count");
+      setError(actionError.message || "Failed to confirm transfer");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRejectTransfer(id) {
+    try {
+      setLoading(true);
+      await rejectTransfer(id, { reason: "Rejected by destination admin" });
+      await loadMovements(filters);
+      window.dispatchEvent(new Event(LIVE_UPDATE_EVENT));
+    } catch (actionError) {
+      setError(actionError.message || "Failed to reject transfer");
     } finally {
       setLoading(false);
     }
@@ -386,20 +298,18 @@ function StockMovements() {
         <section className="inventory-hero inventory-hero--compact">
           <div className="inventory-hero__content">
             <p className="inventory-hero__eyebrow">Movements</p>
-            <h2 className="inventory-hero__title">
-              {editingMovementId ? "Edit Stock Movement" : "Record Stock Movement"}
-            </h2>
+            <h2 className="inventory-hero__title">Stock Movement Engine</h2>
             <p className="inventory-hero__copy">
-              Create stock movements with location-aware item selection and live ledger updates.
+              Record multi-item stock in, out, transfer, and adjustments. Location is assigned automatically.
             </p>
           </div>
           <div className="inventory-hero__stats">
             <article>
-              <p>Visible Items</p>
+              <p>Items</p>
               <strong>{items.length}</strong>
             </article>
             <article>
-              <p>Visible Records</p>
+              <p>Movements</p>
               <strong>{movements.length}</strong>
             </article>
           </div>
@@ -417,25 +327,13 @@ function StockMovements() {
         <section className="inventory-card">
           <div className="inventory-card__header">
             <div>
-              <p className="dashboard-card__eyebrow">Movement Entry</p>
-              <h3>{editingMovementId ? "Update Movement" : "Create Movement"}</h3>
+              <p className="dashboard-card__eyebrow">Create Movement</p>
+              <h3>Multi-item Entry</h3>
             </div>
-            {isLocationBound ? (
-              <span className="badge-chip">Location Locked: {selectedLocationName}</span>
-            ) : null}
           </div>
 
           <div className="admin-grid admin-grid--movements">
-            <select name="item_id" value={formData.item_id} onChange={handleChange}>
-              <option value="">Select Item</option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-
-            <select name="movement_type" value={formData.movement_type} onChange={handleChange}>
+            <select name="movement_type" value={formData.movement_type} onChange={handleFormFieldChange}>
               {MOVEMENT_TYPE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
@@ -443,80 +341,23 @@ function StockMovements() {
               ))}
             </select>
 
-            {formData.movement_type === "ADJUSTMENT" ? (
-              <select name="adjustment_direction" value={formData.adjustment_direction} onChange={handleChange}>
-                <option value="INCREASE">Increase Stock (+)</option>
-                <option value="DECREASE">Decrease Stock (-)</option>
-              </select>
-            ) : null}
-
-            {!isLocationBound && formData.movement_type !== "TRANSFER" ? (
-              <select name="location_id" value={formData.location_id} onChange={handleChange}>
-                <option value="">Primary Location</option>
-                {locations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}
+            {isTransfer ? (
+              <select
+                name="destination_location_id"
+                value={formData.destination_location_id}
+                onChange={handleFormFieldChange}
+              >
+                <option value="">Destination Location</option>
+                {destinationOptions.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
                   </option>
                 ))}
               </select>
             ) : null}
 
-            {formData.movement_type === "TRANSFER" ? (
-              <>
-                {!isLocationBound ? (
-                  <select
-                    name="source_location_id"
-                    value={formData.source_location_id}
-                    onChange={handleChange}
-                  >
-                    <option value="">Source Location</option>
-                    {locations.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <div className="inventory-inline-chip">Source: {selectedLocationName}</div>
-                )}
-
-                <select
-                  name="destination_location_id"
-                  value={formData.destination_location_id}
-                  onChange={handleChange}
-                >
-                  <option value="">Destination Location</option>
-                  {locations
-                    .filter((location) => String(location.id) !== String(formData.source_location_id || fixedLocationId))
-                    .map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                </select>
-              </>
-            ) : null}
-
-            <select name="section_id" value={formData.section_id} onChange={handleChange}>
-              <option value="">Section</option>
-              {sections.map((section) => (
-                <option key={section.id} value={section.id}>
-                  {section.name}
-                </option>
-              ))}
-            </select>
-
-            <select name="asset_id" value={formData.asset_id} onChange={handleChange}>
-              <option value="">Asset</option>
-              {assets.map((asset) => (
-                <option key={asset.id} value={asset.id}>
-                  {asset.name}
-                </option>
-              ))}
-            </select>
-
-            {formData.movement_type === "STOCK_IN" ? (
-              <select name="supplier_id" value={formData.supplier_id} onChange={handleChange}>
+            {isIn ? (
+              <select name="supplier_id" value={formData.supplier_id} onChange={handleFormFieldChange}>
                 <option value="">Supplier</option>
                 {suppliers.map((supplier) => (
                   <option key={supplier.id} value={supplier.id}>
@@ -526,164 +367,119 @@ function StockMovements() {
               </select>
             ) : null}
 
-            {formData.movement_type === "STOCK_OUT" || formData.movement_type === "ASSET_ISSUE" ? (
-              <select name="recipient_id" value={formData.recipient_id} onChange={handleChange}>
+            {isOut ? (
+              <select name="recipient_id" value={formData.recipient_id} onChange={handleFormFieldChange}>
                 <option value="">Recipient</option>
                 {recipients.map((recipient) => (
                   <option key={recipient.id} value={recipient.id}>
-                    {recipient.full_name}
+                    {recipient.full_name || recipient.name}
                   </option>
                 ))}
               </select>
             ) : null}
 
             <input
-              type="number"
-              name="quantity"
-              placeholder="Quantity"
-              value={formData.quantity}
-              onChange={handleChange}
-            />
-            <input
-              type="number"
-              name="unit_cost"
-              placeholder="Unit Cost"
-              value={formData.unit_cost}
-              onChange={handleChange}
-            />
-            <input
-              type="datetime-local"
-              name="created_at"
-              value={formData.created_at}
-              onChange={handleChange}
-            />
-            <input
-              type="text"
               name="reference"
               placeholder="Reference / Notes"
               value={formData.reference}
-              onChange={handleChange}
+              onChange={handleFormFieldChange}
             />
           </div>
 
-          <div className="inventory-card__actions">
-            <button type="button" className="primary-button" onClick={handleSubmit} disabled={loading}>
-              {loading ? "Saving..." : editingMovementId ? "Update Movement" : "Record Movement"}
-            </button>
-
-            {editingMovementId ? (
-              <button type="button" className="secondary-button" onClick={resetMovementForm} disabled={loading}>
-                Cancel Edit
-              </button>
-            ) : null}
-          </div>
-        </section>
-
-        {canPostCounts ? (
-          <section className="inventory-card">
-            <div className="inventory-card__header">
-              <div>
-                <p className="dashboard-card__eyebrow">Inventory Count</p>
-                <h3>Quick Physical Count</h3>
-              </div>
-            </div>
-            <div className="admin-grid admin-grid--counts">
-              {!isLocationBound ? (
+          <div className="stack-list" style={{ marginTop: "1rem" }}>
+            {formData.items.map((entry, index) => (
+              <div key={`movement-item-${index}`} className="admin-grid admin-grid--reports">
                 <select
-                  value={countData.location_id}
-                  onChange={(event) =>
-                    setCountData((current) => ({ ...current, location_id: event.target.value }))
-                  }
+                  value={entry.item_id}
+                  onChange={(event) => handleItemChange(index, "item_id", event.target.value)}
                 >
-                  <option value="">Location</option>
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
+                  <option value="">Select Item</option>
+                  {items.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
                     </option>
                   ))}
                 </select>
-              ) : (
-                <div className="inventory-inline-chip">Counting: {selectedLocationName}</div>
-              )}
+                <input
+                  type="number"
+                  value={entry.quantity}
+                  onChange={(event) => handleItemChange(index, "quantity", event.target.value)}
+                  placeholder={isAdjustment ? "Quantity (+/-)" : "Quantity"}
+                />
+                <input
+                  type="number"
+                  value={entry.cost}
+                  onChange={(event) => handleItemChange(index, "cost", event.target.value)}
+                  placeholder="Cost (optional)"
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => removeMovementItem(index)}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
 
-              <select
-                value={countData.item_id}
-                onChange={(event) =>
-                  setCountData((current) => ({ ...current, item_id: event.target.value }))
-                }
-              >
-                <option value="">Item</option>
-                {items.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                type="number"
-                placeholder="Counted Quantity"
-                value={countData.counted_quantity}
-                onChange={(event) =>
-                  setCountData((current) => ({ ...current, counted_quantity: event.target.value }))
-                }
-              />
-
-              <button type="button" className="secondary-button" onClick={handleCountSubmit} disabled={loading}>
-                Post Count
-              </button>
-            </div>
-          </section>
-        ) : null}
+          <div className="inventory-card__actions">
+            <button type="button" className="secondary-button" onClick={addMovementItem}>
+              Add Item
+            </button>
+            <button type="button" className="primary-button" onClick={handleSubmit} disabled={loading}>
+              {loading ? "Saving..." : "Record Movement"}
+            </button>
+          </div>
+        </section>
 
         <section className="inventory-panel">
           <div className="inventory-panel__header">
             <div>
-              <p className="dashboard-card__eyebrow">Daily Ledger</p>
-              <h3>Daily Movements</h3>
+              <p className="dashboard-card__eyebrow">Movement History</p>
+              <h3>Recorded Transactions</h3>
             </div>
             <div className="reports-page__exports stock-movements__filters">
               <input
                 type="date"
                 name="start_date"
-                value={dailyFilters.start_date}
-                onChange={handleDailyFilterChange}
+                value={filters.start_date}
+                onChange={(event) =>
+                  setFilters((current) => ({ ...current, start_date: event.target.value }))
+                }
               />
               <input
                 type="date"
                 name="end_date"
-                value={dailyFilters.end_date}
-                onChange={handleDailyFilterChange}
+                value={filters.end_date}
+                onChange={(event) =>
+                  setFilters((current) => ({ ...current, end_date: event.target.value }))
+                }
               />
-              {!isLocationBound ? (
-                <select
-                  name="location_id"
-                  value={dailyFilters.location_id}
-                  onChange={handleDailyFilterChange}
-                >
-                  <option value="">All Locations</option>
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <span className="inventory-inline-chip">Location: {selectedLocationName}</span>
-              )}
-              <button
-                type="button"
-                className="secondary-button secondary-button--small"
-                onClick={() =>
-                  setDailyFilters((current) => ({
-                    ...current,
-                    start_date: getTodayDateValue(),
-                    end_date: getTodayDateValue()
-                  }))
+              <select
+                value={filters.movement_type}
+                onChange={(event) =>
+                  setFilters((current) => ({ ...current, movement_type: event.target.value }))
                 }
               >
-                Today
-              </button>
+                <option value="">All Types</option>
+                {MOVEMENT_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filters.status}
+                onChange={(event) =>
+                  setFilters((current) => ({ ...current, status: event.target.value }))
+                }
+              >
+                <option value="">All Status</option>
+                <option value="PENDING">Not Received</option>
+                <option value="COMPLETED">Received</option>
+                <option value="REJECTED">Rejected</option>
+              </select>
             </div>
           </div>
 
@@ -691,63 +487,125 @@ function StockMovements() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Item</th>
-                  <th>Type</th>
-                  <th>Qty</th>
-                  <th>Location</th>
-                  <th>Section</th>
-                  <th>Supplier / Recipient</th>
-                  <th>Reference</th>
-                  <th>Entered By</th>
-                  <th>Time</th>
+                  <th>
+                    <SortHeader
+                      label="Type"
+                      columnKey="movement_type"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortHeader
+                      label="Status"
+                      columnKey="status"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortHeader
+                      label="Route"
+                      columnKey="route"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                    />
+                  </th>
+                  <th>Items</th>
+                  <th>
+                    <SortHeader
+                      label="Reference"
+                      columnKey="reference"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortHeader
+                      label="Created By"
+                      columnKey="created_by_name"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortHeader
+                      label="Time"
+                      columnKey="created_at"
+                      sortKey={movementTable.sortKey}
+                      sortDirection={movementTable.sortDirection}
+                      onSort={movementTable.toggleSort}
+                    />
+                  </th>
                   <th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {movements.length === 0 ? (
                   <tr>
-                    <td colSpan="10" className="data-table__empty">No movements found for the selected day.</td>
+                    <td colSpan="8" className="data-table__empty">
+                      No movements found.
+                    </td>
                   </tr>
                 ) : (
-                  movements.map((movement, index) => (
-                    <tr key={`${movement.id}-${movement.reference || movement.item_name}-${index}`}>
-                      <td>
-                        <ItemIdentity
-                          name={movement.item_name}
-                          imagePath={movement.item_image}
-                          compact
-                        />
-                      </td>
+                  pagedMovements.map((movement) => (
+                    <tr key={movement.id}>
                       <td>{formatMovementType(movement.movement_type)}</td>
-                      <td>{movement.quantity}</td>
-                      <td>{movement.location}</td>
-                      <td>{movement.section || "-"}</td>
-                      <td>{movement.supplier || movement.recipient || "-"}</td>
+                      <td>
+                        <span className={`status-chip status-chip--${String(movement.status || "").toLowerCase() || "pending"}`}>
+                          {getStatusLabel(movement)}
+                        </span>
+                      </td>
+                      <td>
+                        {getMovementRouteLabel(movement)}
+                      </td>
+                      <td>
+                        <div className="request-item-list">
+                          {(movement.items || []).map((item) => (
+                            <ItemIdentity
+                              key={`${movement.id}-${item.id}`}
+                              name={item.item_name}
+                              imagePath={item.item_image}
+                              meta={`${item.quantity} ${item.item_unit || ""}`.trim()}
+                              compact
+                            />
+                          ))}
+                        </div>
+                      </td>
                       <td>{movement.reference || "-"}</td>
-                      <td>{movement.entered_by}</td>
-                      <td>{new Date(movement.timestamp).toLocaleString()}</td>
+                      <td>{movement.created_by_name || "-"}</td>
+                      <td>{new Date(movement.created_at).toLocaleString()}</td>
                       <td className="text-right">
-                        {canEditMovements && movement.can_modify ? (
+                        {movement.can_confirm || movement.can_reject ? (
                           <div className="action-row" style={{ justifyContent: "flex-end" }}>
-                            <button
-                              type="button"
-                              className="action-btn action-btn--edit"
-                              onClick={() => handleEditMovement(movement)}
-                              disabled={loading}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="action-btn action-btn--delete"
-                              onClick={() => handleDeleteMovement(movement.id)}
-                              disabled={loading}
-                            >
-                              Delete
-                            </button>
+                            {movement.can_confirm ? (
+                              <button
+                                type="button"
+                                className="action-btn action-btn--edit"
+                                onClick={() => void handleConfirmTransfer(movement.id)}
+                                disabled={loading}
+                              >
+                                Confirm
+                              </button>
+                            ) : null}
+                            {movement.can_reject ? (
+                              <button
+                                type="button"
+                                className="action-btn action-btn--delete"
+                                onClick={() => void handleRejectTransfer(movement.id)}
+                                disabled={loading}
+                              >
+                                Reject
+                              </button>
+                            ) : null}
                           </div>
                         ) : (
-                          <span className="status-chip status-chip--pending">Locked</span>
+                          <span className="request-notice-card__meta">-</span>
                         )}
                       </td>
                     </tr>
@@ -756,6 +614,15 @@ function StockMovements() {
               </tbody>
             </table>
           </div>
+
+          <TablePagination
+            page={movementTable.page}
+            pageSize={movementTable.pageSize}
+            totalItems={movementTable.totalItems}
+            totalPages={movementTable.totalPages}
+            onPageChange={movementTable.setPage}
+            onPageSizeChange={movementTable.setPageSize}
+          />
         </section>
       </div>
     </DashboardLayout>

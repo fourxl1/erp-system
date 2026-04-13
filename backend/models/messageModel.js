@@ -16,8 +16,10 @@ async function createMessage({ sender_id, receiver_id, subject, message }) {
         c.created_at,
         sender.id AS sender_id,
         sender.full_name AS sender_name,
+        sender.location_id AS sender_location_id,
         receiver.id AS receiver_id,
-        receiver.full_name AS receiver_name
+        receiver.full_name AS receiver_name,
+        receiver.location_id AS receiver_location_id
       FROM created c
       JOIN users sender ON sender.id = c.sender_id
       JOIN users receiver ON receiver.id = c.receiver_id

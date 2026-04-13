@@ -110,13 +110,28 @@ const getInventoryValueReport = asyncHandler(async (req, res) => {
     req.user
   );
 
-  return sendSuccess(
-    res,
-    rows.map((row) => ({
-      ...row,
-      item_image: buildItemImageUrl(req, row.item_image)
-    }))
+  const serializedRows = rows.map((row) => ({
+    ...row,
+    item_image: buildItemImageUrl(req, row.item_image)
+  }));
+
+  const summary = serializedRows.reduce(
+    (accumulator, row) => ({
+      item_count: accumulator.item_count + 1,
+      total_quantity: accumulator.total_quantity + Number(row.current_quantity || 0),
+      total_value: accumulator.total_value + Number(row.total_value || 0)
+    }),
+    {
+      item_count: 0,
+      total_quantity: 0,
+      total_value: 0
+    }
   );
+
+  return sendSuccess(res, {
+    rows: serializedRows,
+    summary
+  });
 });
 
 module.exports = {

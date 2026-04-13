@@ -507,40 +507,79 @@ async function updateUnit(id, { name, description }) {
   return result.rows[0] || null;
 }
 
-async function listSuppliers() {
+async function listSuppliers(locationId = null) {
+  const values = [];
+  let where = "";
+
+  if (locationId) {
+    values.push(locationId);
+    where = `WHERE s.location_id = $1::BIGINT`;
+  }
+
   const result = await query(
     `
-      SELECT id, name, contact_name, phone, email, notes, created_at
-      FROM suppliers
-      ORDER BY name
-    `
+      SELECT
+        s.id,
+        s.location_id,
+        l.name AS location,
+        s.name,
+        s.contact_name,
+        s.phone,
+        s.email,
+        s.notes,
+        s.created_at
+      FROM suppliers s
+      JOIN locations l ON l.id = s.location_id
+      ${where}
+      ORDER BY s.name
+    `,
+    values
   );
 
   return result.rows;
 }
 
-async function createSupplier({ name, contact_name, phone, email, notes }) {
+async function createSupplier({ location_id, name, contact_name, phone, email, notes }) {
   const result = await query(
     `
-      INSERT INTO suppliers (name, contact_name, phone, email, notes)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO suppliers (location_id, name, contact_name, phone, email, notes)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
     `,
-    [name, contact_name || null, phone || null, email || null, notes || null]
+    [location_id, name, contact_name || null, phone || null, email || null, notes || null]
   );
 
   return result.rows[0];
 }
 
-async function updateSupplier(id, { name, contact_name, phone, email, notes }) {
+async function updateSupplier(id, { location_id, name, contact_name, phone, email, notes }) {
   const result = await query(
     `
       UPDATE suppliers
-      SET name = $1, contact_name = $2, phone = $3, email = $4, notes = $5
-      WHERE id = $6
+      SET
+        location_id = $1,
+        name = $2,
+        contact_name = $3,
+        phone = $4,
+        email = $5,
+        notes = $6
+      WHERE id = $7
       RETURNING *
     `,
-    [name, contact_name || null, phone || null, email || null, notes || null, id]
+    [location_id, name, contact_name || null, phone || null, email || null, notes || null, id]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getSupplierById(id) {
+  const result = await query(
+    `
+      SELECT id, location_id, name, contact_name, phone, email, notes, created_at
+      FROM suppliers
+      WHERE id = $1
+    `,
+    [id]
   );
 
   return result.rows[0] || null;
@@ -552,7 +591,7 @@ async function listUsers(locationId = null) {
 
   if (locationId) {
     values.push(locationId);
-    where += ` AND u.location_id = $1`;
+    where += ` AND (u.location_id = $1 OR (u.location_id IS NULL AND LOWER(COALESCE(r.name, '')) = 'superadmin'))`;
   }
 
   const result = await query(
@@ -662,40 +701,66 @@ async function deactivateUser(id) {
   return result.rows[0] || null;
 }
 
-async function listRecipients() {
+async function listRecipients(locationId = null) {
+  const values = [];
+  let where = "";
+
+  if (locationId) {
+    values.push(locationId);
+    where = `WHERE r.location_id = $1::BIGINT`;
+  }
+
   const result = await query(
     `
-      SELECT id, name, department
-      FROM recipients
+      SELECT id, location_id, name, department
+      FROM recipients r
+      ${where}
       ORDER BY name
-    `
+    `,
+    values
   );
 
   return result.rows;
 }
 
-async function createRecipient({ name, department }) {
+async function createRecipient({ location_id, name, department }) {
   const result = await query(
     `
-      INSERT INTO recipients (name, department)
-      VALUES ($1, $2)
-      RETURNING id, name, department
+      INSERT INTO recipients (location_id, name, department)
+      VALUES ($1, $2, $3)
+      RETURNING id, location_id, name, department
     `,
-    [name, department || null]
+    [location_id, name, department || null]
   );
 
   return result.rows[0];
 }
 
-async function updateRecipient(id, { name, department }) {
+async function updateRecipient(id, { location_id, name, department }) {
   const result = await query(
     `
       UPDATE recipients
-      SET name = $1, department = $2
-      WHERE id = $3
-      RETURNING id, name, department
+      SET
+        location_id = $1,
+        name = $2,
+        department = $3
+      WHERE id = $4
+      RETURNING id, location_id, name, department
     `,
-    [name, department || null, id]
+    [location_id, name, department || null, id]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getRecipientById(id) {
+  const result = await query(
+    `
+      SELECT id, location_id, name, department
+      FROM recipients
+      WHERE id = $1
+    `,
+    [id]
   );
 
   return result.rows[0] || null;
@@ -752,6 +817,7 @@ module.exports = {
   listSuppliers,
   createSupplier,
   updateSupplier,
+  getSupplierById,
   listUsers,
   getUserById,
   getRoleIdByName,
@@ -761,5 +827,6 @@ module.exports = {
   listRecipients,
   createRecipient,
   updateRecipient,
+  getRecipientById,
   deleteEntity
 };

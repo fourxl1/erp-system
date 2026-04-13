@@ -1,20 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ItemIdentity from "../components/ItemIdentity";
+import SortHeader from "../components/SortHeader";
+import TablePagination from "../components/TablePagination";
 import DashboardLayout from "../layouts/DashboardLayout";
+import { useActiveLocationId } from "../hooks/useActiveLocation";
+import useSortedPagination from "../hooks/useSortedPagination";
 import {
-  fetchAlerts,
   fetchAvailableInventory,
   fetchInventoryStats,
-  fetchRequests,
-  markAlertAsRead
+  fetchNotifications,
+  markNotificationAsRead
 } from "../services/api";
-import {
-  buildRequestNotifications,
-  dismissRequestNotificationKeys,
-  getDismissedRequestNotificationKeys,
-  REQUEST_NOTIFICATION_STATE_EVENT
-} from "../utils/requestNotifications";
 
 const LIVE_UPDATE_EVENT = "inventory-live-update";
 
@@ -30,109 +27,77 @@ function normalizeRoleName(roleName) {
   return String(roleName || "").trim().toLowerCase();
 }
 
+function targetPathForType(type) {
+  const normalized = String(type || "").toUpperCase();
+
+  if (normalized === "REQUEST") {
+    return "/requests";
+  }
+
+  if (normalized === "MESSAGE") {
+    return "/messages";
+  }
+
+  if (normalized === "TRANSFER") {
+    return "/movements";
+  }
+
+  return "/dashboard";
+}
+
 function Dashboard() {
   const navigate = useNavigate();
+  const activeLocationId = useActiveLocationId();
   const currentUser = readStoredUser();
   const currentRole = normalizeRoleName(currentUser.role_name);
   const isStaff = currentRole === "staff";
 
   const [stats, setStats] = useState({ totalItems: 0, lowStock: 0, totalValue: null });
-  const [alerts, setAlerts] = useState([]);
   const [availability, setAvailability] = useState([]);
-  const [requests, setRequests] = useState([]);
+  const [notifications, setNotifications] = useState([]);
   const [error, setError] = useState("");
-  const [requestError, setRequestError] = useState("");
-  const [dismissedKeys, setDismissedKeys] = useState(() =>
-    getDismissedRequestNotificationKeys(currentUser.id)
-  );
+
+  const loadDashboard = useCallback(async () => {
+    try {
+      const [statsData, availabilityData, notificationData] = await Promise.all([
+        fetchInventoryStats(),
+        fetchAvailableInventory(),
+        fetchNotifications({ limit: 20 })
+      ]);
+
+      setStats({
+        totalItems: Number(statsData.totalItems || 0),
+        lowStock: Number(statsData.lowStock || 0),
+        totalValue: statsData.totalValue
+      });
+      setAvailability(availabilityData || []);
+      setNotifications(Array.isArray(notificationData) ? notificationData : []);
+      setError("");
+    } catch (loadError) {
+      setError(loadError.message || "Failed to load dashboard data");
+    }
+  }, []);
 
   useEffect(() => {
-    let active = true;
-
-    async function loadDashboard() {
-      try {
-        const [statsData, alertData, availabilityData] = await Promise.all([
-          fetchInventoryStats(),
-          fetchAlerts(),
-          fetchAvailableInventory()
-        ]);
-
-        if (!active) {
-          return;
-        }
-
-        setStats({
-          totalItems: Number(statsData.totalItems || 0),
-          lowStock: Number(statsData.lowStock || 0),
-          totalValue: statsData.totalValue
-        });
-        setAlerts(Array.isArray(alertData) ? alertData : []);
-        setAvailability((availabilityData || []).slice(0, 10));
-        setError("");
-      } catch (loadError) {
-        setError(loadError.message || "Failed to load dashboard data");
-      }
-    }
-
-    void loadDashboard();
+    const loadTimer = window.setTimeout(() => {
+      void loadDashboard();
+    }, 0);
 
     function handleLiveUpdate() {
       void loadDashboard();
     }
 
     window.addEventListener(LIVE_UPDATE_EVENT, handleLiveUpdate);
-
     return () => {
-      active = false;
+      window.clearTimeout(loadTimer);
       window.removeEventListener(LIVE_UPDATE_EVENT, handleLiveUpdate);
     };
-  }, []);
+  }, [activeLocationId, loadDashboard]);
 
-  useEffect(() => {
-    function handleNotificationStateRefresh() {
-      setDismissedKeys(getDismissedRequestNotificationKeys(currentUser.id));
-    }
-
-    window.addEventListener(REQUEST_NOTIFICATION_STATE_EVENT, handleNotificationStateRefresh);
-
-    return () => {
-      window.removeEventListener(REQUEST_NOTIFICATION_STATE_EVENT, handleNotificationStateRefresh);
-    };
-  }, [currentUser.id]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadRequestsData() {
-      try {
-        const response = await fetchRequests();
-
-        if (!active) {
-          return;
-        }
-
-        setRequests(response.requests || []);
-        setRequestError("");
-      } catch (loadError) {
-        setRequestError(loadError.message || "Failed to load requests");
-      }
-    }
-
-    void loadRequestsData();
-    const interval = window.setInterval(loadRequestsData, 30000);
-
-    function handleLiveUpdate() {
-      void loadRequestsData();
-    }
-
-    window.addEventListener(LIVE_UPDATE_EVENT, handleLiveUpdate);
-
-    return () => {
-      active = false;
-      window.clearInterval(interval);
-      window.removeEventListener(LIVE_UPDATE_EVENT, handleLiveUpdate);
-    };
-  }, []);
+  const unreadNotifications = useMemo(
+    () => notifications.filter((notification) => !notification.is_read),
+    [notifications]
+  );
 
   const cards = useMemo(() => {
     const items = [
@@ -151,11 +116,11 @@ function Dashboard() {
         path: "/inventory"
       },
       {
-        label: "Pending Requests",
-        value: requests.filter((request) => request.status === "PENDING").length,
-        helper: "Open workflows",
-        icon: "RQ",
-        path: "/requests"
+        label: "Unread Notifications",
+        value: unreadNotifications.length,
+        helper: "Requests, messages, transfers",
+        icon: "NT",
+        path: "/dashboard"
       }
     ];
 
@@ -170,38 +135,36 @@ function Dashboard() {
     }
 
     return items;
-  }, [isStaff, requests, stats]);
+  }, [isStaff, stats, unreadNotifications.length]);
 
-  const requestNotifications = useMemo(
-    () => buildRequestNotifications(requests, currentUser.id, dismissedKeys).slice(0, 4),
-    [currentUser.id, dismissedKeys, requests]
-  );
-
-  const unreadAlerts = useMemo(
-    () => alerts.filter((alert) => !alert.is_read).slice(0, 3),
-    [alerts]
-  );
-
-  async function handleResolveAlert(alertId) {
+  async function handleResolveNotification(id) {
     try {
-      await markAlertAsRead(alertId);
-      setAlerts((current) =>
-        current.map((alert) =>
-          alert.id === alertId ? { ...alert, is_read: true } : alert
-        )
+      await markNotificationAsRead(id);
+      setNotifications((current) =>
+        current.map((entry) => (String(entry.id) === String(id) ? { ...entry, is_read: true } : entry))
       );
     } catch (actionError) {
-      setError(actionError.message || "Failed to update alert");
+      setError(actionError.message || "Failed to update notification");
     }
   }
 
-  function handleClearRequests() {
-    dismissRequestNotificationKeys(
-      currentUser.id,
-      requestNotifications.map((notification) => notification.key)
-    );
-    window.dispatchEvent(new Event(REQUEST_NOTIFICATION_STATE_EVENT));
-  }
+  const availabilityTable = useSortedPagination(availability, {
+    initialSortKey: "available_quantity",
+    initialSortDirection: "desc",
+    initialPageSize: 10,
+    getSortValue: (row, key) => {
+      switch (key) {
+        case "item_name":
+          return row.item_name;
+        case "location":
+          return row.location;
+        case "available_quantity":
+          return Number(row.available_quantity || 0);
+        default:
+          return row?.[key];
+      }
+    }
+  });
 
   return (
     <DashboardLayout>
@@ -229,82 +192,46 @@ function Dashboard() {
           <div className="dashboard-card dashboard-card--compact">
             <header className="dashboard-card__header">
               <div>
-                <p className="dashboard-card__eyebrow">Requests</p>
-                <h3>Workflow Notifications</h3>
+                <p className="dashboard-card__eyebrow">Notifications</p>
+                <h3>Recent Updates</h3>
               </div>
-              <div className="action-row">
-                <span className="dashboard-card__badge">{requestNotifications.length} Active</span>
-                <button
-                  type="button"
-                  className="secondary-button secondary-button--small"
-                  onClick={handleClearRequests}
-                  disabled={requestNotifications.length === 0}
-                >
-                  Clear
-                </button>
-              </div>
+              <span className="dashboard-card__badge">{unreadNotifications.length} Unread</span>
             </header>
 
-            {requestError ? <p className="dashboard-card__alert">{requestError}</p> : null}
-
             <div className="dashboard-notifications dashboard-notifications--compact">
-              {requestNotifications.length === 0 ? (
+              {notifications.length === 0 ? (
                 <div className="dashboard-card__empty dashboard-card__empty--compact">
-                  <span>OK</span>
-                  <p>All request workflows are up to date.</p>
+                  <span>NT</span>
+                  <p>No notifications yet.</p>
                 </div>
               ) : (
-                requestNotifications.map((notification) => (
-                  <article key={notification.key} className="dashboard-notification dashboard-notification--compact">
+                notifications.slice(0, 5).map((notification) => (
+                  <article key={`${notification.id}-${notification.created_at}`} className="dashboard-notification dashboard-notification--compact">
                     <div>
                       <strong>{notification.title}</strong>
                       <p>{notification.message}</p>
                     </div>
                     <div className="action-row">
-                      <span className="request-notice-card__meta">{notification.meta}</span>
+                      <span className="request-notice-card__meta">
+                        {new Date(notification.created_at).toLocaleString()}
+                      </span>
                       <button
                         type="button"
                         className="secondary-button secondary-button--small"
-                        onClick={() => navigate("/requests")}
+                        onClick={() => navigate(targetPathForType(notification.type))}
                       >
                         Open
                       </button>
+                      {!notification.is_read ? (
+                        <button
+                          type="button"
+                          className="secondary-button secondary-button--small"
+                          onClick={() => void handleResolveNotification(notification.id)}
+                        >
+                          Read
+                        </button>
+                      ) : null}
                     </div>
-                  </article>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="dashboard-card dashboard-card--compact">
-            <header className="dashboard-card__header">
-              <div>
-                <p className="dashboard-card__eyebrow">Alerts</p>
-                <h3>Unread System Alerts</h3>
-              </div>
-              <span className="dashboard-card__badge">{unreadAlerts.length} Unread</span>
-            </header>
-
-            <div className="dashboard-alert-stream dashboard-alert-stream--compact">
-              {unreadAlerts.length === 0 ? (
-                <div className="dashboard-card__empty dashboard-card__empty--compact">
-                  <span>AL</span>
-                  <p>No active unread alerts.</p>
-                </div>
-              ) : (
-                unreadAlerts.map((alert) => (
-                  <article key={alert.id} className="dashboard-alert dashboard-alert--compact">
-                    <div>
-                      <strong>{alert.title}</strong>
-                      <p>{alert.message}</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="secondary-button secondary-button--small"
-                      onClick={() => void handleResolveAlert(alert.id)}
-                    >
-                      Resolve
-                    </button>
                   </article>
                 ))
               )}
@@ -330,9 +257,34 @@ function Dashboard() {
             <table className="dashboard-table">
               <thead>
                 <tr>
-                  <th>Item</th>
-                  <th>Location</th>
-                  <th className="text-right">Available Qty</th>
+                  <th>
+                    <SortHeader
+                      label="Item"
+                      columnKey="item_name"
+                      sortKey={availabilityTable.sortKey}
+                      sortDirection={availabilityTable.sortDirection}
+                      onSort={availabilityTable.toggleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortHeader
+                      label="Location"
+                      columnKey="location"
+                      sortKey={availabilityTable.sortKey}
+                      sortDirection={availabilityTable.sortDirection}
+                      onSort={availabilityTable.toggleSort}
+                    />
+                  </th>
+                  <th className="text-right">
+                    <SortHeader
+                      label="Available Qty"
+                      columnKey="available_quantity"
+                      sortKey={availabilityTable.sortKey}
+                      sortDirection={availabilityTable.sortDirection}
+                      onSort={availabilityTable.toggleSort}
+                      align="right"
+                    />
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -343,7 +295,7 @@ function Dashboard() {
                     </td>
                   </tr>
                 ) : (
-                  availability.map((row) => (
+                  availabilityTable.pagedRows.map((row) => (
                     <tr key={`${row.item_id}-${row.location_id}`}>
                       <td>
                         <ItemIdentity
@@ -360,6 +312,15 @@ function Dashboard() {
               </tbody>
             </table>
           </div>
+
+          <TablePagination
+            page={availabilityTable.page}
+            pageSize={availabilityTable.pageSize}
+            totalItems={availabilityTable.totalItems}
+            totalPages={availabilityTable.totalPages}
+            onPageChange={availabilityTable.setPage}
+            onPageSizeChange={availabilityTable.setPageSize}
+          />
         </section>
       </div>
     </DashboardLayout>

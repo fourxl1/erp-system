@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "seed:request-demo": "node scripts/seed-request-demo.js",
     "hash-password": "node scripts/hash.js",
     "migrate:units": "node scripts/migrate_units.js",
     "migrate:normalize-items": "node scripts/migrate_normalize_items.js"

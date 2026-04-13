@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import DashboardLayout from "../layouts/DashboardLayout";
+import TablePagination from "../components/TablePagination";
+import { useActiveLocationId } from "../hooks/useActiveLocation";
+import useSortedPagination from "../hooks/useSortedPagination";
 import {
   createAsset,
   createCategory,
@@ -38,6 +41,7 @@ function MasterData() {
   const currentRole = normalizeRoleName(currentUser.role_name);
   const isSuperAdmin = currentRole === "superadmin";
   const canManageUsers = currentRole === "admin" || currentRole === "superadmin";
+  const activeLocationId = useActiveLocationId();
   const userRoleOptions = isSuperAdmin ? SUPERADMIN_USER_ROLE_OPTIONS : ADMIN_USER_ROLE_OPTIONS;
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -68,7 +72,6 @@ function MasterData() {
     email: "",
     password: "",
     role_name: "Staff",
-    location_id: "",
     is_active: true
   });
   const [recipientForm, setRecipientForm] = useState({
@@ -86,17 +89,193 @@ function MasterData() {
   });
   const [sectionForm, setSectionForm] = useState({
     id: null,
-    location_id: "",
     name: "",
     description: ""
   });
   const [assetForm, setAssetForm] = useState({
     id: null,
-    location_id: "",
     asset_code: "",
     name: "",
     description: ""
   });
+
+  const activeLocationName = useMemo(
+    () => locations.find((entry) => String(entry.id) === String(activeLocationId))?.name || "Active Location",
+    [activeLocationId, locations]
+  );
+
+  const tableSortConfig = useMemo(() => {
+    switch (activeTab) {
+      case "categories":
+        return {
+          options: [
+            { value: "name", label: "Name" },
+            { value: "description", label: "Description" }
+          ],
+          getSortValue: (row, key) => row?.[key]
+        };
+      case "units":
+        return {
+          options: [{ value: "name", label: "Unit Name" }],
+          getSortValue: (row, key) => row?.[key]
+        };
+      case "locations":
+        return {
+          options: [
+            { value: "name", label: "Name" },
+            { value: "code", label: "Code" }
+          ],
+          getSortValue: (row, key) => row?.[key]
+        };
+      case "sections":
+        return {
+          options: [
+            { value: "name", label: "Section" },
+            { value: "location", label: "Location" }
+          ],
+          getSortValue: (row, key) => row?.[key]
+        };
+      case "assets":
+        return {
+          options: [
+            { value: "asset_code", label: "Asset Code" },
+            { value: "name", label: "Name" },
+            { value: "location", label: "Location" }
+          ],
+          getSortValue: (row, key) => row?.[key]
+        };
+      case "suppliers":
+        return {
+          options: [
+            { value: "name", label: "Supplier" },
+            { value: "contact_name", label: "Contact" },
+            { value: "phone", label: "Phone" }
+          ],
+          getSortValue: (row, key) => row?.[key]
+        };
+      case "users":
+        return {
+          options: [
+            { value: "full_name", label: "Name" },
+            { value: "email", label: "Email" },
+            { value: "role_name", label: "Role" },
+            { value: "location", label: "Location" }
+          ],
+          getSortValue: (row, key) => row?.[key]
+        };
+      case "recipients":
+        return {
+          options: [
+            { value: "name", label: "Name" },
+            { value: "department", label: "Department" }
+          ],
+          getSortValue: (row, key) => {
+            if (key === "name") {
+              return row?.name || row?.full_name;
+            }
+
+            if (key === "department") {
+              return row?.department || row?.location;
+            }
+
+            return row?.[key];
+          }
+        };
+      default:
+        return {
+          options: [{ value: "name", label: "Name" }],
+          getSortValue: (row, key) => row?.[key]
+        };
+    }
+  }, [activeTab]);
+
+  const activeTabRows = useMemo(() => {
+    if (activeTab === "categories") {
+      return categories;
+    }
+
+    if (activeTab === "units") {
+      return units;
+    }
+
+    if (activeTab === "locations") {
+      return locations;
+    }
+
+    if (activeTab === "sections") {
+      return sections;
+    }
+
+    if (activeTab === "assets") {
+      return assets;
+    }
+
+    if (activeTab === "suppliers") {
+      return suppliers;
+    }
+
+    if (activeTab === "users") {
+      return users;
+    }
+
+    if (activeTab === "recipients") {
+      return recipients;
+    }
+
+    return [];
+  }, [activeTab, assets, categories, locations, recipients, sections, suppliers, units, users]);
+
+  const masterTable = useSortedPagination(activeTabRows, {
+    initialSortKey: tableSortConfig.options[0]?.value || null,
+    initialSortDirection: "asc",
+    initialPageSize: 10,
+    getSortValue: tableSortConfig.getSortValue
+  });
+  const {
+    setSortKey: setMasterSortKey,
+    setSortDirection: setMasterSortDirection,
+    setPage: setMasterPage
+  } = masterTable;
+
+  useEffect(() => {
+    const defaultSortKey = tableSortConfig.options[0]?.value || null;
+    setMasterSortKey(defaultSortKey);
+    setMasterSortDirection("asc");
+    setMasterPage(1);
+  }, [activeTab, tableSortConfig.options, setMasterPage, setMasterSortDirection, setMasterSortKey]);
+
+  function renderTableControls() {
+    return (
+      <div className="table-toolbar" style={{ marginTop: "0.75rem" }}>
+        <span className="request-notice-card__meta">Rows: {masterTable.totalItems}</span>
+        <div className="action-row">
+          <select
+            value={masterTable.sortKey || ""}
+            onChange={(event) => {
+              masterTable.setSortKey(event.target.value);
+              masterTable.setPage(1);
+            }}
+          >
+            {tableSortConfig.options.map((option) => (
+              <option key={option.value} value={option.value}>
+                Sort by {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            value={masterTable.sortDirection}
+            onChange={(event) => {
+              masterTable.setSortDirection(event.target.value);
+              masterTable.setPage(1);
+            }}
+          >
+            <option value="asc">Ascending</option>
+            <option value="desc">Descending</option>
+          </select>
+        </div>
+      </div>
+    );
+  }
 
   const resetUserForm = useCallback(() => {
     setUserForm({
@@ -105,7 +284,6 @@ function MasterData() {
       email: "",
       password: "",
       role_name: "Staff",
-      location_id: "",
       is_active: true
     });
   }, []);
@@ -157,7 +335,7 @@ function MasterData() {
 
   useEffect(() => {
     void loadData();
-  }, [loadData]);
+  }, [activeLocationId, loadData]);
 
   const availableTabs = useMemo(
     () => [
@@ -250,7 +428,6 @@ function MasterData() {
       email: user.email || "",
       password: "",
       role_name: user.role_name || userRoleOptions[0] || "Staff",
-      location_id: user.location_id ? String(user.location_id) : "",
       is_active: user.is_active !== false
     });
   }
@@ -279,8 +456,8 @@ function MasterData() {
       return false;
     }
 
-    if (normalizeRoleName(userForm.role_name) !== "superadmin" && !userForm.location_id) {
-      setError("Location is required for Admin and Staff users");
+    if (normalizeRoleName(userForm.role_name) !== "superadmin" && !activeLocationId) {
+      setError("Active location context is required for Admin and Staff users");
       return false;
     }
 
@@ -342,6 +519,7 @@ function MasterData() {
               {categoryForm.id ? "Update" : "Add"}
             </button>
           </div>
+          {renderTableControls()}
           <div className="table-wrap" style={{ marginTop: "1rem" }}>
   <table className="data-table">
     <thead>
@@ -352,7 +530,7 @@ function MasterData() {
       </tr>
     </thead>
     <tbody>
-      {categories.map((category) => (
+      {masterTable.pagedRows.map((category) => (
         <tr key={category.id} className="clickable-row">
           <td onClick={() => setCategoryForm(category)}>
             {category.name}
@@ -373,6 +551,14 @@ function MasterData() {
     </tbody>
   </table>
 </div>
+      <TablePagination
+        page={masterTable.page}
+        pageSize={masterTable.pageSize}
+        totalItems={masterTable.totalItems}
+        totalPages={masterTable.totalPages}
+        onPageChange={masterTable.setPage}
+        onPageSizeChange={masterTable.setPageSize}
+      />
        </section>
   )}
 
@@ -398,6 +584,7 @@ function MasterData() {
               {unitForm.id ? "Update" : "Add"}
             </button>
           </div>
+          {renderTableControls()}
           <div className="table-wrap" style={{ marginTop: "1rem" }}>
   <table className="data-table">
     <thead>
@@ -407,7 +594,7 @@ function MasterData() {
       </tr>
     </thead>
     <tbody>
-      {units.map((unit) => (
+      {masterTable.pagedRows.map((unit) => (
         <tr key={unit.id} className="clickable-row">
           <td onClick={() => setUnitForm(unit)}>
             {unit.name}
@@ -425,6 +612,14 @@ function MasterData() {
     </tbody>
   </table>
 </div>
+      <TablePagination
+        page={masterTable.page}
+        pageSize={masterTable.pageSize}
+        totalItems={masterTable.totalItems}
+        totalPages={masterTable.totalPages}
+        onPageChange={masterTable.setPage}
+        onPageSizeChange={masterTable.setPageSize}
+      />
         </section>
 )}
         {activeTab === "locations" && (
@@ -464,6 +659,7 @@ function MasterData() {
               {locationForm.id ? "Update" : "Add"}
             </button>
           </div>
+          {renderTableControls()}
           <div className="table-wrap" style={{ marginTop: "1rem" }}>
   <table className="data-table">
     <thead>
@@ -474,7 +670,7 @@ function MasterData() {
       </tr>
     </thead>
     <tbody>
-      {locations.map((location) => (
+      {masterTable.pagedRows.map((location) => (
         <tr key={location.id} className="clickable-row">
           <td onClick={() => setLocationForm(location)}>
             {location.name}
@@ -495,25 +691,21 @@ function MasterData() {
     </tbody>
   </table>
 </div>
+      <TablePagination
+        page={masterTable.page}
+        pageSize={masterTable.pageSize}
+        totalItems={masterTable.totalItems}
+        totalPages={masterTable.totalPages}
+        onPageChange={masterTable.setPage}
+        onPageSizeChange={masterTable.setPageSize}
+      />
         </section>
         )}
         {activeTab === "sections" && (
   <section className="module-placeholder">
     <h3>Store Sections</h3>
           <div className="admin-grid">
-            <select
-              value={sectionForm.location_id}
-              onChange={(event) =>
-                setSectionForm({ ...sectionForm, location_id: event.target.value })
-              }
-            >
-              <option value="">Select Location</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
+            <div className="inventory-inline-chip">Location: {activeLocationName}</div>
             <input
               placeholder="Section Name"
               value={sectionForm.name}
@@ -528,13 +720,14 @@ function MasterData() {
                     sectionForm.id
                       ? updateSection(sectionForm.id, sectionForm)
                       : createSection(sectionForm),
-                  () => setSectionForm({ id: null, location_id: "", name: "", description: "" })
+                  () => setSectionForm({ id: null, name: "", description: "" })
                 )
               }
             >
               {sectionForm.id ? "Update" : "Add"}
             </button>
           </div>
+          {renderTableControls()}
           <div className="table-wrap" style={{ marginTop: "1rem" }}>
   <table className="data-table">
     <thead>
@@ -545,7 +738,7 @@ function MasterData() {
       </tr>
     </thead>
     <tbody>
-      {sections.map((section) => (
+      {masterTable.pagedRows.map((section) => (
         <tr key={section.id} className="clickable-row">
           <td onClick={() => setSectionForm(section)}>
             {section.name}
@@ -566,25 +759,21 @@ function MasterData() {
     </tbody>
   </table>
 </div>
+      <TablePagination
+        page={masterTable.page}
+        pageSize={masterTable.pageSize}
+        totalItems={masterTable.totalItems}
+        totalPages={masterTable.totalPages}
+        onPageChange={masterTable.setPage}
+        onPageSizeChange={masterTable.setPageSize}
+      />
         </section>
         )}
         {activeTab === "assets" && (
   <section className="module-placeholder module-placeholder--wide">
     <h3>Assets / Vehicles</h3>
           <div className="admin-grid admin-grid--assets">
-            <select
-              value={assetForm.location_id}
-              onChange={(event) =>
-                setAssetForm({ ...assetForm, location_id: event.target.value })
-              }
-            >
-              <option value="">Select Location</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </select>
+            <div className="inventory-inline-chip">Location: {activeLocationName}</div>
             <input
               placeholder="Asset Code"
               value={assetForm.asset_code}
@@ -606,7 +795,6 @@ function MasterData() {
                   () =>
                     setAssetForm({
                       id: null,
-                      location_id: "",
                       asset_code: "",
                       name: "",
                       description: ""
@@ -617,6 +805,7 @@ function MasterData() {
               {assetForm.id ? "Update" : "Add"}
             </button>
           </div>
+         {renderTableControls()}
          <div className="table-wrap" style={{ marginTop: "1rem" }}>
   <table className="data-table">
     <thead>
@@ -628,7 +817,7 @@ function MasterData() {
       </tr>
     </thead>
     <tbody>
-      {assets.map((asset) => (
+      {masterTable.pagedRows.map((asset) => (
         <tr key={asset.id} className="clickable-row">
           <td onClick={() => setAssetForm(asset)}>
             {asset.asset_code}
@@ -652,6 +841,14 @@ function MasterData() {
     </tbody>
   </table>
 </div>
+      <TablePagination
+        page={masterTable.page}
+        pageSize={masterTable.pageSize}
+        totalItems={masterTable.totalItems}
+        totalPages={masterTable.totalPages}
+        onPageChange={masterTable.setPage}
+        onPageSizeChange={masterTable.setPageSize}
+      />
         </section>
         )}
         {activeTab === "suppliers" && (
@@ -699,6 +896,7 @@ function MasterData() {
               {supplierForm.id ? "Update" : "Add"}
             </button>
           </div>
+          {renderTableControls()}
           <div className="table-wrap" style={{ marginTop: "1rem" }}>
             <table className="data-table">
               <thead>
@@ -710,7 +908,7 @@ function MasterData() {
                 </tr>
               </thead>
               <tbody>
-                {suppliers.map((supplier) => (
+                {masterTable.pagedRows.map((supplier) => (
                   <tr key={supplier.id} className="clickable-row">
                     <td onClick={() => setSupplierForm(supplier)}>{supplier.name}</td>
                     <td onClick={() => setSupplierForm(supplier)}>{supplier.contact_name}</td>
@@ -728,12 +926,23 @@ function MasterData() {
               </tbody>
             </table>
           </div>
+          <TablePagination
+            page={masterTable.page}
+            pageSize={masterTable.pageSize}
+            totalItems={masterTable.totalItems}
+            totalPages={masterTable.totalPages}
+            onPageChange={masterTable.setPage}
+            onPageSizeChange={masterTable.setPageSize}
+          />
         </section>
         )}
-       {canManageUsers && activeTab === "users" && (
+      {canManageUsers && activeTab === "users" && (
   <section className="module-placeholder module-placeholder--wide">
             <h3>Users</h3>
             <div className="admin-grid admin-grid--recipients">
+              <div className="inventory-inline-chip">
+                Active Location: {activeLocationName}
+              </div>
               <input
                 placeholder="Full Name"
                 value={userForm.full_name}
@@ -766,35 +975,13 @@ function MasterData() {
                   </option>
                 ))}
               </select>
-              <select
-                value={userForm.location_id}
-                onChange={(event) =>
-                  setUserForm({ ...userForm, location_id: event.target.value })
-                }
-              >
-                <option value="">No Location</option>
-                {locations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}
-                  </option>
-                ))}
-              </select>
               <button
                 className="primary-button"
                 disabled={loading}
                 onClick={() =>
                   validateUserForm() &&
                   handleAction(
-                    () => {
-                      const payload = {
-                        ...userForm,
-                        location_id: userForm.location_id || null
-                      };
-
-                      return userForm.id
-                        ? updateUser(userForm.id, payload)
-                        : createUser(payload);
-                    },
+                    () => (userForm.id ? updateUser(userForm.id, userForm) : createUser(userForm)),
                     resetUserForm
                   )
                 }
@@ -810,6 +997,7 @@ function MasterData() {
                 Clear
               </button>
             </div>
+            {renderTableControls()}
             <div className="table-wrap" style={{ marginTop: "1rem" }}>
               <table className="data-table">
                 <thead>
@@ -822,7 +1010,7 @@ function MasterData() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((user) => (
+                  {masterTable.pagedRows.map((user) => (
                     <tr key={user.id} className="clickable-row">
                       <td onClick={() => startEditingUser(user)}>{user.full_name}</td>
                       <td onClick={() => startEditingUser(user)}>{user.email}</td>
@@ -841,6 +1029,14 @@ function MasterData() {
                 </tbody>
               </table>
             </div>
+            <TablePagination
+              page={masterTable.page}
+              pageSize={masterTable.pageSize}
+              totalItems={masterTable.totalItems}
+              totalPages={masterTable.totalPages}
+              onPageChange={masterTable.setPage}
+              onPageSizeChange={masterTable.setPageSize}
+            />
           </section>
         ) }
         {activeTab === "recipients" && (
@@ -878,6 +1074,7 @@ function MasterData() {
               {recipientForm.id ? "Update" : "Add"}
             </button>
           </div>
+          {renderTableControls()}
           <div className="table-wrap" style={{ marginTop: "1rem" }}>
             <table className="data-table">
               <thead>
@@ -888,7 +1085,7 @@ function MasterData() {
                 </tr>
               </thead>
               <tbody>
-                {recipients.map((recipient) => (
+                {masterTable.pagedRows.map((recipient) => (
                   <tr key={recipient.id} className="clickable-row">
                     <td onClick={() => startEditingRecipient(recipient)}>
                       {recipient.name || recipient.full_name}
@@ -909,6 +1106,14 @@ function MasterData() {
               </tbody>
             </table>
           </div>
+          <TablePagination
+            page={masterTable.page}
+            pageSize={masterTable.pageSize}
+            totalItems={masterTable.totalItems}
+            totalPages={masterTable.totalPages}
+            onPageChange={masterTable.setPage}
+            onPageSizeChange={masterTable.setPageSize}
+          />
         </section>
         )}
       </div>

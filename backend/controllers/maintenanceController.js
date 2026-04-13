@@ -7,11 +7,13 @@ function canManageMaintenance(user, entry) {
     return false;
   }
 
-  if (user.role_code === "SUPERADMIN") {
-    return true;
+  const activeLocationId = Number(user.active_location_id || user.location_id || 0);
+
+  if ((user.role_code === "ADMIN" || user.role_code === "SUPERADMIN") && activeLocationId > 0) {
+    return Number(activeLocationId) === Number(entry.location_id);
   }
 
-  return user.role_code === "ADMIN" && Number(user.location_id) === Number(entry.location_id);
+  return false;
 }
 
 const logMaintenance = asyncHandler(async (req, res) => {

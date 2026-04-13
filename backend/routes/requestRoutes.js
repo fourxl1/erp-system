@@ -14,7 +14,5 @@ router.post("/:id/approve", protect, authorizeRoles("ADMIN", "SUPERADMIN"), vali
 router.post("/:id/reject", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.rejectRequest), requestController.rejectRequest);
 router.put("/:id/approve", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.approveRequest), requestController.approveRequest);
 router.put("/:id/reject", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.rejectRequest), requestController.rejectRequest);
-router.patch("/:id/approve", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.approveRequest), requestController.approveRequest);
-router.patch("/:id/reject", protect, authorizeRoles("ADMIN", "SUPERADMIN"), validate(validationSchemas.rejectRequest), requestController.rejectRequest);
 
 module.exports = router;
