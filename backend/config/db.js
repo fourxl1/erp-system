@@ -39,6 +39,19 @@ async function getClient() {
   return pool.connect();
 }
 
+async function withSavepoint(client, work) {
+  const savepoint = `sp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  try {
+    await client.query(`SAVEPOINT ${savepoint}`);
+    const result = await work();
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`);
+    return result;
+  } catch (error) {
+    await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    throw error;
+  }
+}
+
 async function withTransaction(work) {
   const client = await getClient();
 
@@ -68,6 +81,7 @@ module.exports = {
   pool,
   query,
   getClient,
+  withSavepoint,
   withTransaction,
   healthcheck
 };

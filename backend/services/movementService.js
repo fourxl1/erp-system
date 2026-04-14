@@ -1,4 +1,4 @@
-const { withTransaction } = require("../config/db");
+const { withTransaction, withSavepoint } = require("../config/db");
 const movementModel = require("../models/movementModel");
 const requestModel = require("../models/requestModel");
 const maintenanceModel = require("../models/maintenanceModel");
@@ -340,24 +340,38 @@ function serializeMovementHeader(record, user = null) {
 }
 
 async function insertMovementAuditLog(client, userId, action, entityId, details) {
-  await client.query(
-    `
-      INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
-      VALUES ($1, $2, $3, $4, $5)
-    `,
-    [userId, action, "stock_movements", entityId, JSON.stringify(details)]
-  );
+  try {
+    await withSavepoint(client, async () => {
+      await client.query(
+        `
+          INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [userId, action, "stock_movements", entityId, JSON.stringify(details)]
+      );
+    });
+  } catch (error) {
+    console.warn(`Failed to insert movement audit log (${action}):`, error.message);
+  }
 }
 
 async function insertMaintenanceAuditLog(client, userId, action, entityId, details) {
-  await client.query(
-    `
-      INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
-      VALUES ($1, $2, $3, $4, $5)
-    `,
-    [userId, action, "maintenance_logs", entityId, JSON.stringify(details)]
-  );
+  try {
+    await withSavepoint(client, async () => {
+      await client.query(
+        `
+          INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+        [userId, action, "maintenance_logs", entityId, JSON.stringify(details)]
+      );
+    });
+  } catch (error) {
+    console.warn(`Failed to insert maintenance audit log (${action}):`, error.message);
+  }
 }
+
+
 
 async function triggerLowStockAlerts(entries = []) {
   return entries;
@@ -631,6 +645,7 @@ async function recordMovementWithItems(client, payload, user) {
     status: movementType === "TRANSFER" ? "PENDING" : "COMPLETED",
     items: movementItemsPayload.length
   });
+
   return hydrated;
 }
 
@@ -661,10 +676,6 @@ async function prepareSingleMovement(client, payload, user, options = {}) {
 
   if (payload.supplier_id) {
     await validateSupplierForLocation(payload.supplier_id, payload.location_id);
-  }
-
-  if (payload.recipient_id) {
-    await validateRecipientForLocation(payload.recipient_id, payload.location_id);
   }
 
   const balanceBefore =
@@ -743,29 +754,38 @@ async function applySingleMovement(client, payload, user, options = {}) {
     created_at: payload.created_at
   });
 
-  await movementModel.insertMovementLog(client, {
-    movement_id: movement.id,
-    action: "CREATED",
-    old_value: null,
-    new_value: serializeMovementRecord({
-      ...movement,
-      ledger_quantity: prepared.deltaQuantity,
-      maintenance_usage_count: 0
-    }),
-    changed_by: user.id
-  });
+  try {
+    await movementModel.insertMovementLog(client, {
+      movement_id: movement.id,
+      action: "CREATED",
+      old_value: null,
+      new_value: serializeMovementRecord({
+        ...movement,
+        ledger_quantity: prepared.deltaQuantity,
+        maintenance_usage_count: 0
+      }),
+      changed_by: user.id
+    });
+  } catch (logError) {
+    console.warn("Failed to insert movement log:", logError.message);
+  }
 
-  await insertMovementAuditLog(client, user.id, `MOVEMENT_${prepared.movementType}`, movement.id, {
-    item_id: payload.item_id,
-    location_id: payload.location_id,
-    quantity: prepared.quantity,
-    delta_quantity: prepared.deltaQuantity,
-    reference: payload.reference || null,
-    request_id: payload.request_id || null
-  });
+  try {
+    await insertMovementAuditLog(client, user.id, `MOVEMENT_${prepared.movementType}`, movement.id, {
+      item_id: payload.item_id,
+      location_id: payload.location_id,
+      quantity: prepared.quantity,
+      delta_quantity: prepared.deltaQuantity,
+      reference: payload.reference || null,
+      request_id: payload.request_id || null
+    });
+  } catch (auditError) {
+    console.warn("Failed to insert movement audit log:", auditError.message);
+  }
 
   return movement;
 }
+
 
 async function recordMovement(payload, user) {
   const normalizedType = normalizeIncomingMovementType(payload.movement_type);
@@ -1183,12 +1203,12 @@ async function approveRequest(requestId, user, approvalData = {}) {
             {
               item_id: item.item_id,
               location_id: route.destination_location_id,
-              movement_type: "OUT",
+              movement_type: "IN",
               quantity: item.quantity,
               unit_cost: item.unit_cost || 0,
               reference: approvalData.reference || request.request_number,
               request_id: request.id,
-              recipient_id: null,
+              supplier_id: null,
               performed_by: user.id
             },
             user,
@@ -1201,35 +1221,45 @@ async function approveRequest(requestId, user, approvalData = {}) {
     await requestModel.updateRequestStatus(client, request.id, "APPROVED", {
       approvedBy: user.id
     });
-    const approvedRequest = await requestModel.getRequestByIdWithClient(client, request.id);
+    const resultRequest = await requestModel.getRequestByIdWithClient(client, request.id);
 
-    await client.query(
-      `
-        INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
-        VALUES ($1, $2, $3, $4, $5)
-      `,
-      [
-        user.id,
-        "REQUEST_APPROVED",
-        "stock_requests",
-        request.id,
-        JSON.stringify({
-          source_location_id: route.source_location_id,
-          destination_location_id: route.destination_location_id,
-          items: requestItems.length,
-          reference: approvalData.reference || request.request_number
-        })
-      ]
-    );
+    try {
+      await withSavepoint(client, async () => {
+        await client.query(
+          `
+            INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            user.id,
+            "REQUEST_APPROVED",
+            "stock_requests",
+            request.id,
+            JSON.stringify({
+              source_location_id: route.source_location_id,
+              destination_location_id: route.destination_location_id,
+              items: requestItems.length,
+              reference: approvalData.reference || request.request_number
+            })
+          ]
+        );
+      });
+    } catch (auditError) {
+      console.warn("Failed to insert request approval audit log:", auditError.message);
+    }
+
 
     return {
-      ...normalizeRequestResponse(approvedRequest, user),
+      ...normalizeRequestResponse(resultRequest, user),
       items: requestItems,
       results
     };
   });
 
+
+
   await notificationService.notifyRequestUpdated(approvedRequest, "CONFIRMED");
+
   await triggerLowStockAlerts(
     approvedRequest.results.flatMap((entry) => {
       if (entry?.outMovement && entry?.inMovement) {
@@ -1262,19 +1292,27 @@ async function rejectRequest(requestId, user, reason = null) {
     await requestModel.updateRequestStatus(client, request.id, "REJECTED");
     const rejectedRequest = await requestModel.getRequestByIdWithClient(client, request.id);
 
-    await client.query(
-      `
-        INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
-        VALUES ($1, $2, $3, $4, $5)
-      `,
-      [user.id, "REQUEST_REJECTED", "stock_requests", request.id, JSON.stringify({ reason })]
-    );
+    try {
+      await withSavepoint(client, async () => {
+        await client.query(
+          `
+            INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details)
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [user.id, "REQUEST_REJECTED", "stock_requests", request.id, JSON.stringify({ reason })]
+        );
+      });
+    } catch (auditError) {
+      console.warn("Failed to insert request rejection audit log:", auditError.message);
+    }
+
 
     return {
       ...normalizeRequestResponse(rejectedRequest, user),
       items: requestItems
     };
   });
+
 
   await notificationService.notifyRequestUpdated(rejectedRequest, "REJECTED");
   return rejectedRequest;

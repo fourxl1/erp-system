@@ -1,4 +1,4 @@
-const { query } = require("../config/db");
+const { query, withSavepoint } = require("../config/db");
 
 let hasLoggedMissingMovementLogsTable = false;
 
@@ -611,20 +611,22 @@ async function deleteMovement(client, id) {
 
 async function insertMovementLog(client, entry) {
   try {
-    const result = await client.query(
-      `
-        INSERT INTO movement_logs (movement_id, action, old_value, new_value, changed_by)
-        VALUES ($1::BIGINT, $2::TEXT, $3::jsonb, $4::jsonb, $5::BIGINT)
-        RETURNING *
-      `,
-      [
-        entry.movement_id,
-        entry.action,
-        entry.old_value ? JSON.stringify(entry.old_value) : null,
-        entry.new_value ? JSON.stringify(entry.new_value) : null,
-        entry.changed_by || null
-      ]
-    );
+    const result = await withSavepoint(client, async () => {
+      return await client.query(
+        `
+          INSERT INTO movement_logs (movement_id, action, old_value, new_value, changed_by)
+          VALUES ($1::BIGINT, $2::TEXT, $3::jsonb, $4::jsonb, $5::BIGINT)
+          RETURNING *
+        `,
+        [
+          entry.movement_id,
+          entry.action,
+          entry.old_value ? JSON.stringify(entry.old_value) : null,
+          entry.new_value ? JSON.stringify(entry.new_value) : null,
+          entry.changed_by || null
+        ]
+      );
+    });
 
     return result.rows[0];
   } catch (error) {
@@ -635,13 +637,15 @@ async function insertMovementLog(client, entry) {
           "movement_logs table is missing. Skipping movement log persistence until the database migration is applied."
         );
       }
-
-      return null;
+    } else {
+      console.warn("Failed to insert movement log:", error.message);
     }
 
-    throw error;
+    return null;
   }
 }
+
+
 
 async function getAverageUnitCost(itemId, locationId = null) {
   const values = [itemId];
