@@ -13,7 +13,8 @@ function getAllowedOrigins() {
   const allowedOrigins = parseAllowedOrigins();
 
   if (isProduction() && allowedOrigins.length === 0) {
-    throw new Error("CORS_ORIGINS must be configured in production");
+    console.error("CORS_ORIGINS is not set in production. Server will start but all cross-origin requests will be blocked.");
+    // Return empty list so isAllowedOrigin will block non-empty origins in production.
   }
 
   return allowedOrigins;

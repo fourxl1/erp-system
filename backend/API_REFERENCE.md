@@ -190,7 +190,7 @@ Body:
 }
 ```
 
-### `POST /api/requests/:id/approve`
+### `PUT /api/requests/:id/approve`
 
 Optional body:
 
@@ -200,7 +200,7 @@ Optional body:
 }
 ```
 
-### `POST /api/requests/:id/reject`
+### `PUT /api/requests/:id/reject`
 
 Body:
 

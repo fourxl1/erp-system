@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
     "seed:request-demo": "node scripts/seed-request-demo.js",
     "hash-password": "node scripts/hash.js",
     "migrate:units": "node scripts/migrate_units.js",
@@ -32,6 +34,14 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^3.1.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "coveragePathIgnorePatterns": [
+      "/node_modules/"
+    ],
+    "testTimeout": 30000
   }
 }

@@ -102,14 +102,6 @@ app.use("/api/auth/login", authLimiter);
    STATIC FILES (UPLOADS)
 ========================= */
 app.use(
-  "/uploads/items",
-  express.static(path.join(__dirname, "uploads", "items"), staticFileOptions)
-);
-app.use(
-  "/uploads",
-  express.static(path.join(__dirname, "uploads", "items"), staticFileOptions)
-);
-app.use(
   "/uploads",
   express.static(path.join(__dirname, "uploads"), {
     ...staticFileOptions,
