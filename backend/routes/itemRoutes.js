@@ -10,6 +10,7 @@ const router = express.Router();
 router.get("/", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.itemQuery), itemController.getItems);
 router.get("/availability", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.itemQuery), itemController.getAvailableInventory);
 router.get("/stats", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.dashboardQuery), itemController.getInventoryStats);
+router.get("/uploaded-images", protect, authorizeRoles("ADMIN", "SUPERADMIN"), itemController.getUploadedItemImages);
 router.get("/:id/stock", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.itemIdParam), itemController.getItemStock);
 router.get("/:id", protect, authorizeRoles("STAFF", "ADMIN", "SUPERADMIN"), validate(validationSchemas.itemIdParam), itemController.getItem);
 router.post("/", protect, authorizeRoles("ADMIN", "SUPERADMIN"), upload.single("image"), validate(validationSchemas.itemPayload), itemController.createNewItem);

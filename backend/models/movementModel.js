@@ -251,9 +251,12 @@ async function getMovementHeaderById(id, options = {}) {
     `
       SELECT
         sm.id,
+        sm.item_id,
         sm.location_id,
         sm.section_id,
         sm.movement_type,
+        sm.quantity,
+        sm.unit_cost,
         sm.reference,
         sm.source_location_id,
         sm.destination_location_id,
@@ -267,6 +270,11 @@ async function getMovementHeaderById(id, options = {}) {
         sm.transfer_confirmed_by,
         sm.transfer_confirmed_at,
         sm.created_at,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM maintenance_items_used miu
+          WHERE miu.movement_id = sm.id
+        ), 0) AS maintenance_usage_count,
         location.name AS location_name,
         source_location.name AS source_location_name,
         destination_location.name AS destination_location_name,
@@ -337,9 +345,12 @@ async function listMovementHeaders(filters = {}) {
     `
       SELECT
         sm.id,
+        sm.item_id,
         sm.location_id,
         sm.section_id,
         sm.movement_type,
+        sm.quantity,
+        sm.unit_cost,
         sm.reference,
         sm.source_location_id,
         sm.destination_location_id,
@@ -352,6 +363,11 @@ async function listMovementHeaders(filters = {}) {
         sm.transfer_confirmed_by,
         sm.transfer_confirmed_at,
         sm.created_at,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM maintenance_items_used miu
+          WHERE miu.movement_id = sm.id
+        ), 0) AS maintenance_usage_count,
         location.name AS location_name,
         source_location.name AS source_location_name,
         destination_location.name AS destination_location_name,
@@ -414,6 +430,64 @@ async function updateMovementStatus(client, id, status, meta = {}) {
   );
 
   return result.rows[0] || null;
+}
+
+async function updateMovementHeader(client, id, movement) {
+  const result = await client.query(
+    `
+      UPDATE stock_movements
+      SET
+        item_id = $1::BIGINT,
+        location_id = $2::BIGINT,
+        section_id = $3::BIGINT,
+        movement_type = $4::TEXT,
+        quantity = $5::NUMERIC,
+        unit_cost = $6::NUMERIC,
+        reference = $7::TEXT,
+        source_location_id = $8::BIGINT,
+        destination_location_id = $9::BIGINT,
+        asset_id = $10::BIGINT,
+        recipient_id = $11::BIGINT,
+        supplier_id = $12::BIGINT,
+        request_id = $13::BIGINT,
+        performed_by = $14::BIGINT,
+        created_at = COALESCE($15::TIMESTAMP, created_at)
+      WHERE id = $16::BIGINT
+      RETURNING *
+    `,
+    [
+      movement.item_id,
+      movement.location_id,
+      movement.section_id || null,
+      movement.movement_type,
+      movement.quantity,
+      movement.unit_cost || 0,
+      movement.reference || null,
+      movement.source_location_id || null,
+      movement.destination_location_id || null,
+      movement.asset_id || null,
+      movement.recipient_id || null,
+      movement.supplier_id || null,
+      movement.request_id || null,
+      movement.performed_by,
+      movement.created_at || null,
+      id
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function replaceMovementItems(client, movementId, locationId, items = []) {
+  await client.query(
+    `
+      DELETE FROM stock_movement_items
+      WHERE movement_id = $1::BIGINT
+    `,
+    [movementId]
+  );
+
+  return insertMovementItems(client, movementId, locationId, items);
 }
 
 async function getMovementById(id, options = {}) {
@@ -844,6 +918,8 @@ module.exports = {
   getMovementHeaderById,
   listMovementHeaders,
   updateMovementStatus,
+  updateMovementHeader,
+  replaceMovementItems,
   getMovementById,
   updateMovement,
   createMovement,

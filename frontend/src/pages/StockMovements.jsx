@@ -8,13 +8,16 @@ import useSortedPagination from "../hooks/useSortedPagination";
 import {
   confirmTransfer,
   createStockMovement,
+  deleteStockMovement,
   fetchDailyMovements,
   fetchItems,
   fetchLocations,
   fetchRecipients,
   fetchSuppliers,
-  rejectTransfer
+  rejectTransfer,
+  updateStockMovement
 } from "../services/api";
+import { normalizeRoleName, readStoredUser } from "../utils/auth";
 import { formatMovementType, MOVEMENT_TYPE_OPTIONS } from "../utils/movementTypes";
 
 const LIVE_UPDATE_EVENT = "inventory-live-update";
@@ -42,6 +45,14 @@ function createEmptyForm() {
     reference: "",
     items: [createEmptyMovementItem()]
   };
+}
+
+function toFormMovementType(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+
+  if (normalized === "STOCK_IN") return "IN";
+  if (normalized === "STOCK_OUT") return "OUT";
+  return normalized || "IN";
 }
 
 function getStatusLabel(movement) {
@@ -85,6 +96,7 @@ function StockMovements() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [formData, setFormData] = useState(createEmptyForm);
+  const [editingMovement, setEditingMovement] = useState(null);
   const [filters, setFilters] = useState({
     start_date: getTodayDateValue(),
     end_date: getTodayDateValue(),
@@ -142,6 +154,9 @@ function StockMovements() {
   const isIn = formData.movement_type === "IN";
   const isOut = formData.movement_type === "OUT";
   const isAdjustment = formData.movement_type === "ADJUSTMENT";
+  const currentUser = readStoredUser();
+  const currentRole = normalizeRoleName(currentUser.role_name);
+  const canDeleteMovements = currentRole === "admin" || currentRole === "superadmin";
   const movementTable = useSortedPagination(movements, {
     initialSortKey: "created_at",
     initialSortDirection: "desc",
@@ -172,7 +187,7 @@ function StockMovements() {
   const destinationOptions = useMemo(
     () =>
       locations.filter(
-        (entry) => String(entry.id) !== String(activeLocationId)
+        (entry) => entry.is_active !== false && String(entry.id) !== String(activeLocationId)
       ),
     [activeLocationId, locations]
   );
@@ -213,14 +228,68 @@ function StockMovements() {
 
   function resetForm() {
     setFormData(createEmptyForm());
+    setEditingMovement(null);
+  }
+
+  function handleEditMovement(movement) {
+    const movementType = toFormMovementType(movement.movement_type);
+
+    setEditingMovement(movement);
+    setFormData({
+      movement_type: movementType,
+      destination_location_id: "",
+      supplier_id: movement.supplier_id || "",
+      recipient_id: movement.recipient_id || "",
+      reference: movement.reference || "",
+      items: (movement.items || []).length
+        ? movement.items.map((item) => ({
+            item_id: item.item_id || "",
+            quantity: item.quantity || "",
+            cost: item.cost ?? ""
+          }))
+        : [createEmptyMovementItem()]
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleSubmit() {
     const validItems = formData.items.filter((entry) => entry.item_id && entry.quantity !== "");
 
+    if (!activeLocationId) {
+      setError("Select an active location before recording movements");
+      return;
+    }
+
     if (validItems.length === 0) {
       setError("Add at least one item with quantity");
       return;
+    }
+
+    const selectedItemIds = new Set();
+
+    for (const entry of validItems) {
+      if (selectedItemIds.has(String(entry.item_id))) {
+        setError("Each item can only appear once in a movement");
+        return;
+      }
+
+      selectedItemIds.add(String(entry.item_id));
+
+      const quantity = Number(entry.quantity);
+      if (!Number.isFinite(quantity) || quantity === 0) {
+        setError("Quantity must be a valid non-zero number");
+        return;
+      }
+
+      if (!isAdjustment && quantity <= 0) {
+        setError("Stock in, stock out, and transfer quantities must be greater than zero");
+        return;
+      }
+
+      if (entry.cost !== "" && (!Number.isFinite(Number(entry.cost)) || Number(entry.cost) < 0)) {
+        setError("Cost must be a valid non-negative number");
+        return;
+      }
     }
 
     if (isTransfer && !formData.destination_location_id) {
@@ -240,12 +309,11 @@ function StockMovements() {
 
     try {
       setLoading(true);
-      await createStockMovement({
+      const payload = {
         movement_type: formData.movement_type,
-        
-       ...(isTransfer && {
-  destination_location_id: Number(formData.destination_location_id)
-}),
+        ...(isTransfer && {
+          destination_location_id: Number(formData.destination_location_id)
+        }),
         supplier_id: isIn ? Number(formData.supplier_id) : undefined,
         recipient_id: isOut ? Number(formData.recipient_id) : undefined,
         reference: formData.reference || undefined,
@@ -254,9 +322,16 @@ function StockMovements() {
           quantity: Number(entry.quantity),
           cost: entry.cost === "" ? undefined : Number(entry.cost)
         }))
-      });
+      };
+
+      if (editingMovement) {
+        await updateStockMovement(editingMovement.id, payload);
+      } else {
+        await createStockMovement(payload);
+      }
 
       resetForm();
+      setError("");
       await loadMovements(filters);
       window.dispatchEvent(new Event(LIVE_UPDATE_EVENT));
     } catch (actionError) {
@@ -266,7 +341,28 @@ function StockMovements() {
     }
   }
 
+  async function handleDeleteMovement(id) {
+    if (!window.confirm("Delete this movement and reverse its stock effect?")) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await deleteStockMovement(id);
+      await loadMovements(filters);
+      window.dispatchEvent(new Event(LIVE_UPDATE_EVENT));
+    } catch (actionError) {
+      setError(actionError.message || "Failed to delete movement");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleConfirmTransfer(id) {
+    if (!window.confirm("Receive this transfer into the active destination location?")) {
+      return;
+    }
+
     try {
       setLoading(true);
       await confirmTransfer(id);
@@ -280,9 +376,22 @@ function StockMovements() {
   }
 
   async function handleRejectTransfer(id) {
+    const reason = window.prompt("Reason for rejecting this transfer", "Rejected by destination admin");
+
+    if (reason === null) {
+      return;
+    }
+
+    const trimmedReason = reason.trim();
+
+    if (trimmedReason && trimmedReason.length < 3) {
+      setError("Rejection reason must be at least 3 characters");
+      return;
+    }
+
     try {
       setLoading(true);
-      await rejectTransfer(id, { reason: "Rejected by destination admin" });
+      await rejectTransfer(id, { reason: trimmedReason || "Rejected by destination admin" });
       await loadMovements(filters);
       window.dispatchEvent(new Event(LIVE_UPDATE_EVENT));
     } catch (actionError) {
@@ -328,7 +437,7 @@ function StockMovements() {
           <div className="inventory-card__header">
             <div>
               <p className="dashboard-card__eyebrow">Create Movement</p>
-              <h3>Multi-item Entry</h3>
+              <h3>{editingMovement ? "Edit Movement" : "Multi-item Entry"}</h3>
             </div>
           </div>
 
@@ -427,8 +536,19 @@ function StockMovements() {
             <button type="button" className="secondary-button" onClick={addMovementItem}>
               Add Item
             </button>
+            {editingMovement ? (
+              <button type="button" className="secondary-button" onClick={resetForm} disabled={loading}>
+                Cancel Edit
+              </button>
+            ) : null}
             <button type="button" className="primary-button" onClick={handleSubmit} disabled={loading}>
-              {loading ? "Saving..." : "Record Movement"}
+              {loading
+                ? "Saving..."
+                : editingMovement
+                  ? "Update Movement"
+                  : isTransfer
+                    ? "Create Transfer"
+                    : "Record Movement"}
             </button>
           </div>
         </section>
@@ -581,8 +701,28 @@ function StockMovements() {
                       <td>{movement.created_by_name || "-"}</td>
                       <td>{new Date(movement.created_at).toLocaleString()}</td>
                       <td className="text-right">
-                        {movement.can_confirm || movement.can_reject ? (
+                        {movement.can_edit || movement.can_delete || movement.can_confirm || movement.can_reject ? (
                           <div className="action-row" style={{ justifyContent: "flex-end" }}>
+                            {movement.can_edit ? (
+                              <button
+                                type="button"
+                                className="action-btn action-btn--edit"
+                                onClick={() => handleEditMovement(movement)}
+                                disabled={loading}
+                              >
+                                Edit
+                              </button>
+                            ) : null}
+                            {movement.can_delete && canDeleteMovements ? (
+                              <button
+                                type="button"
+                                className="action-btn action-btn--delete"
+                                onClick={() => void handleDeleteMovement(movement.id)}
+                                disabled={loading}
+                              >
+                                Delete
+                              </button>
+                            ) : null}
                             {movement.can_confirm ? (
                               <button
                                 type="button"
@@ -590,7 +730,7 @@ function StockMovements() {
                                 onClick={() => void handleConfirmTransfer(movement.id)}
                                 disabled={loading}
                               >
-                                Confirm
+                                Receive
                               </button>
                             ) : null}
                             {movement.can_reject ? (

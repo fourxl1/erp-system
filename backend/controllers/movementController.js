@@ -132,17 +132,26 @@ const rejectTransfer = asyncHandler(async (req, res) => {
 
 const updateMovement = asyncHandler(async (req, res) => {
   const payload = {
-    item_id: req.body.item_id,
     section_id: req.body.section_id,
     movement_type: req.body.movement_type,
-    quantity: req.body.quantity,
-    unit_cost: req.body.unit_cost,
     reference: req.body.reference,
     asset_id: req.body.asset_id,
     recipient_id: req.body.recipient_id,
     supplier_id: req.body.supplier_id,
     adjustment_direction: req.body.adjustment_direction,
-    created_at: req.body.created_at || null
+    created_at: req.body.created_at || null,
+    items:
+      Array.isArray(req.body.items) && req.body.items.length > 0
+        ? req.body.items
+        : req.body.item_id
+          ? [
+              {
+                item_id: req.body.item_id,
+                quantity: req.body.quantity,
+                cost: req.body.unit_cost
+              }
+            ]
+          : []
   };
 
 

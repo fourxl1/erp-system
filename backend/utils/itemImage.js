@@ -1,9 +1,10 @@
 const fs = require("fs");
 const path = require("path");
 
-const ITEM_UPLOAD_ROUTE = "/uploads";
+const ITEM_UPLOAD_ROUTE = "/uploads/items";
 const ITEM_UPLOAD_DIRECTORY = path.resolve(__dirname, "..", "uploads", "items");
 const SAFE_FILENAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const ALLOWED_IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp"]);
 
 function isBlank(value) {
   return value === undefined || value === null || String(value).trim() === "";
@@ -92,6 +93,20 @@ function resolveItemImageFilePath(value) {
   return fs.existsSync(localPath) ? localPath : null;
 }
 
+function listUploadedItemImages() {
+  if (!fs.existsSync(ITEM_UPLOAD_DIRECTORY)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(ITEM_UPLOAD_DIRECTORY, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .filter((filename) => SAFE_FILENAME_PATTERN.test(filename))
+    .filter((filename) => ALLOWED_IMAGE_EXTENSIONS.has(path.extname(filename).toLowerCase()))
+    .sort();
+}
+
 module.exports = {
   ITEM_UPLOAD_ROUTE,
   ITEM_UPLOAD_DIRECTORY,
@@ -99,5 +114,6 @@ module.exports = {
   parseItemImageInput,
   buildItemImagePath,
   buildItemImageUrl,
-  resolveItemImageFilePath
+  resolveItemImageFilePath,
+  listUploadedItemImages
 };

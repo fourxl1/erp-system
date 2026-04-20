@@ -9,10 +9,14 @@ import {
   downloadInventoryValueReportCsv,
   downloadInventoryValueReportExcel,
   downloadInventoryValueReportPdf,
+  downloadCurrentStockReportCsv,
+  downloadCurrentStockReportExcel,
+  downloadCurrentStockReportPdf,
   downloadMovementReportCsv,
   downloadMovementReportExcel,
   downloadMovementReportPdf,
   fetchCategories,
+  fetchCurrentStockReport,
   fetchInventoryValueReport,
   fetchItems,
   fetchLocations,
@@ -42,6 +46,13 @@ function isOutgoingMovement(movement) {
 function Reports() {
   const activeLocationId = useActiveLocationId();
   const [inventoryValue, setInventoryValue] = useState([]);
+  const [currentStock, setCurrentStock] = useState([]);
+  const [currentStockSummary, setCurrentStockSummary] = useState({
+    item_count: 0,
+    total_quantity: 0,
+    low_stock_count: 0,
+    out_of_stock_count: 0
+  });
   const [inventorySummary, setInventorySummary] = useState({
     item_count: 0,
     total_quantity: 0,
@@ -69,6 +80,7 @@ function Reports() {
     category_id: "",
     recipient_id: "",
     movement_type: "",
+    search: "",
     start_date: "",
     end_date: ""
   });
@@ -76,9 +88,10 @@ function Reports() {
   const loadData = useCallback(async (activeFilters) => {
     try {
       setLoading(true);
-      const [valueData, movementData, itemData, categoryData, locationData, recipientData] =
+      const [valueData, stockData, movementData, itemData, categoryData, locationData, recipientData] =
         await Promise.all([
           fetchInventoryValueReport(activeFilters),
+          fetchCurrentStockReport(activeFilters),
           fetchMovementReport(activeFilters),
           fetchItems(),
           fetchCategories(),
@@ -87,6 +100,15 @@ function Reports() {
         ]);
 
       setInventoryValue(Array.isArray(valueData?.rows) ? valueData.rows : []);
+      setCurrentStock(Array.isArray(stockData?.rows) ? stockData.rows : []);
+      setCurrentStockSummary(
+        stockData?.summary || {
+          item_count: 0,
+          total_quantity: 0,
+          low_stock_count: 0,
+          out_of_stock_count: 0
+        }
+      );
       setInventorySummary(
         valueData?.summary || {
           item_count: 0,
@@ -114,6 +136,13 @@ function Reports() {
     } catch (loadError) {
       console.error("Failed to load reports", loadError);
       setInventoryValue([]);
+      setCurrentStock([]);
+      setCurrentStockSummary({
+        item_count: 0,
+        total_quantity: 0,
+        low_stock_count: 0,
+        out_of_stock_count: 0
+      });
       setInventorySummary({
         item_count: 0,
         total_quantity: 0,
@@ -154,6 +183,7 @@ function Reports() {
   }
 
   const totalValuation = Number(inventorySummary.total_value || 0);
+  const totalCurrentStockQuantity = Number(currentStockSummary.total_quantity || 0);
   const totalMovementValue = Number(report.summary?.total_movement_value || 0);
   const selectedItem = items.find((item) => String(item.id) === String(filters.item_id));
   const selectedLocation = locations.find(
@@ -190,6 +220,33 @@ function Reports() {
           return Number(row.average_cost || 0);
         case "total_value":
           return Number(row.total_value || 0);
+        default:
+          return row?.[key];
+      }
+    }
+  });
+  const currentStockTable = useSortedPagination(currentStock, {
+    initialSortKey: "item_name",
+    initialSortDirection: "asc",
+    initialPageSize: 10,
+    getSortValue: (row, key) => {
+      switch (key) {
+        case "item_name":
+          return row.item_name;
+        case "category":
+          return row.category;
+        case "supplier":
+          return row.supplier;
+        case "location":
+          return row.location;
+        case "current_quantity":
+          return Number(row.current_quantity || 0);
+        case "reorder_level":
+          return Number(row.reorder_level || 0);
+        case "available_quantity":
+          return Number(row.available_quantity || 0);
+        case "stock_status":
+          return row.stock_status;
         default:
           return row?.[key];
       }
@@ -241,8 +298,8 @@ function Reports() {
               <strong>${totalMovementValue.toFixed(2)}</strong>
             </article>
             <article>
-              <p>Rows in Scope</p>
-              <strong>{report.summary?.movement_count || report.movements.length}</strong>
+              <p>Current Stock Qty</p>
+              <strong>{totalCurrentStockQuantity}</strong>
             </article>
             <article>
               <p>Current Scope</p>
@@ -338,6 +395,17 @@ function Reports() {
               </label>
 
               <label className="field">
+                <span>Item Name Search</span>
+                <input
+                  name="search"
+                  value={filters.search || ""}
+                  onChange={handleFilterChange}
+                  className="inventory-input"
+                  placeholder="Search item name"
+                />
+              </label>
+
+              <label className="field">
                 <span>Start Date</span>
                 <input
                   type="date"
@@ -371,6 +439,212 @@ function Reports() {
               </div>
             </div>
           </div>
+        </section>
+
+        <section className="inventory-panel reports-page__panel">
+          <div className="inventory-panel__header">
+            <div>
+              <p className="dashboard-card__eyebrow">Current Stock</p>
+              <h3>Stock on Hand</h3>
+              <p className="reports-page__scope-copy">
+                {selectedScopeLabel} in {selectedLocationLabel}
+              </p>
+            </div>
+            <div className="inventory-card__actions reports-page__exports">
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() => handleExport(downloadCurrentStockReportPdf)}
+              >
+                Export PDF
+              </button>
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() => handleExport(downloadCurrentStockReportCsv)}
+              >
+                Export CSV
+              </button>
+              <button
+                type="button"
+                className="secondary-button secondary-button--small"
+                onClick={() => handleExport(downloadCurrentStockReportExcel)}
+              >
+                Export Excel
+              </button>
+            </div>
+          </div>
+
+          <div className="reports-page__valuation-summary">
+            <article>
+              <span>Rows</span>
+              <strong>{currentStockSummary.item_count || currentStock.length}</strong>
+            </article>
+            <article>
+              <span>Total Quantity</span>
+              <strong>{totalCurrentStockQuantity}</strong>
+            </article>
+            <article>
+              <span>Low Stock</span>
+              <strong>{currentStockSummary.low_stock_count || 0}</strong>
+            </article>
+            <article>
+              <span>Out of Stock</span>
+              <strong>{currentStockSummary.out_of_stock_count || 0}</strong>
+            </article>
+          </div>
+
+          <div className="inventory-table-wrapper reports-page__valuation-scroll">
+            <table className="inventory-table reports-page__table">
+              <thead>
+                <tr>
+                  <th>Image</th>
+                  <th>
+                    <SortHeader
+                      label="Item"
+                      columnKey="item_name"
+                      sortKey={currentStockTable.sortKey}
+                      sortDirection={currentStockTable.sortDirection}
+                      onSort={currentStockTable.toggleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortHeader
+                      label="Category"
+                      columnKey="category"
+                      sortKey={currentStockTable.sortKey}
+                      sortDirection={currentStockTable.sortDirection}
+                      onSort={currentStockTable.toggleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortHeader
+                      label="Supplier"
+                      columnKey="supplier"
+                      sortKey={currentStockTable.sortKey}
+                      sortDirection={currentStockTable.sortDirection}
+                      onSort={currentStockTable.toggleSort}
+                    />
+                  </th>
+                  <th>
+                    <SortHeader
+                      label="Location"
+                      columnKey="location"
+                      sortKey={currentStockTable.sortKey}
+                      sortDirection={currentStockTable.sortDirection}
+                      onSort={currentStockTable.toggleSort}
+                    />
+                  </th>
+                  <th className="text-right">
+                    <SortHeader
+                      label="Qty"
+                      columnKey="current_quantity"
+                      sortKey={currentStockTable.sortKey}
+                      sortDirection={currentStockTable.sortDirection}
+                      onSort={currentStockTable.toggleSort}
+                      align="right"
+                    />
+                  </th>
+                  <th className="text-right">
+                    <SortHeader
+                      label="Reorder"
+                      columnKey="reorder_level"
+                      sortKey={currentStockTable.sortKey}
+                      sortDirection={currentStockTable.sortDirection}
+                      onSort={currentStockTable.toggleSort}
+                      align="right"
+                    />
+                  </th>
+                  <th className="text-right">
+                    <SortHeader
+                      label="Available"
+                      columnKey="available_quantity"
+                      sortKey={currentStockTable.sortKey}
+                      sortDirection={currentStockTable.sortDirection}
+                      onSort={currentStockTable.toggleSort}
+                      align="right"
+                    />
+                  </th>
+                  <th>
+                    <SortHeader
+                      label="Status"
+                      columnKey="stock_status"
+                      sortKey={currentStockTable.sortKey}
+                      sortDirection={currentStockTable.sortDirection}
+                      onSort={currentStockTable.toggleSort}
+                    />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {currentStock.length === 0 ? (
+                  <tr>
+                    <td colSpan="9" className="empty-state">
+                      No current stock data found.
+                    </td>
+                  </tr>
+                ) : (
+                  currentStockTable.pagedRows.map((row) => {
+                    const imageSrc = getImageSrc(row.item_image);
+                    const statusTone =
+                      row.stock_status === "Out of Stock"
+                        ? "rejected"
+                        : row.stock_status === "Low Stock"
+                          ? "pending"
+                          : "fulfilled";
+
+                    return (
+                      <tr key={`${row.item_id}-${row.location_id || "all"}`}>
+                        <td>
+                          {imageSrc ? (
+                            <button
+                              type="button"
+                              className="report-thumb"
+                              onClick={() => setPreviewImage({ src: imageSrc, alt: row.item_name })}
+                            >
+                              <img src={imageSrc} alt={row.item_name} />
+                            </button>
+                          ) : (
+                            <div className="report-thumb report-thumb--empty">
+                              {row.item_name?.charAt(0).toUpperCase() || "?"}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <strong>{row.item_name}</strong>
+                          <div className="reports-page__meta-secondary">
+                            {row.description || "No description"}
+                          </div>
+                        </td>
+                        <td>{row.category || "Uncategorized"}</td>
+                        <td>{row.supplier || "Not assigned"}</td>
+                        <td>{row.location || selectedLocationLabel}</td>
+                        <td className="text-right">
+                          <strong>{row.current_quantity}</strong> {row.unit || ""}
+                        </td>
+                        <td className="text-right">{row.reorder_level}</td>
+                        <td className="text-right">{row.available_quantity}</td>
+                        <td>
+                          <span className={`status-chip status-chip--${statusTone}`}>
+                            {row.stock_status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <TablePagination
+            page={currentStockTable.page}
+            pageSize={currentStockTable.pageSize}
+            totalItems={currentStockTable.totalItems}
+            totalPages={currentStockTable.totalPages}
+            onPageChange={currentStockTable.setPage}
+            onPageSizeChange={currentStockTable.setPageSize}
+          />
         </section>
 
         <section className="inventory-panel reports-page__panel">

@@ -12,6 +12,19 @@ async function listLocations() {
   return result.rows;
 }
 
+async function getLocationById(id) {
+  const result = await query(
+    `
+      SELECT id, name, code, address, is_active, created_at
+      FROM locations
+      WHERE id = $1
+    `,
+    [id]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function createLocation({ name, code, address }) {
   const result = await query(
     `
@@ -787,6 +800,7 @@ async function deleteEntity(table, id) {
 
 module.exports = {
   listLocations,
+  getLocationById,
   createLocation,
   updateLocation,
   listSections,

@@ -329,6 +329,7 @@ const validationSchemas = {
       { field: "recipient_id", type: "id" },
       { field: "location_id", type: "id" },
       { field: "movement_type", type: "enum", values: acceptedMovementTypes },
+      { field: "search", type: "string" },
       { field: "start_date", type: "string" },
       { field: "end_date", type: "string" }
     ]

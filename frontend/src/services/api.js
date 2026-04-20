@@ -161,6 +161,7 @@ export const fetchCurrentUser = () => request("/auth/me");
 export const fetchItems = (params = {}) => request(`/items${buildQuery(params)}`);
 export const fetchAvailableInventory = (params = {}) => request(`/items/availability${buildQuery(params)}`);
 export const fetchInventoryStats = () => request("/items/stats");
+export const fetchUploadedItemImages = () => request("/items/uploaded-images");
 export const createItem = (data) => request("/items", { method: "POST", body: data });
 export const updateItem = (id, data) => request(`/items/${id}`, { method: "PUT", body: data });
 export const deleteItem = (id) => request(`/items/${id}`, { method: "DELETE" });
@@ -429,6 +430,9 @@ export const fetchMovementReport = (params = {}) =>
 export const fetchInventoryValueReport = (params = {}) =>
   request(`/reports/inventory-value${buildQuery(params)}`);
 
+export const fetchCurrentStockReport = (params = {}) =>
+  request(`/reports/current-stock${buildQuery(params)}`);
+
 export const downloadInventoryValueReportPdf = (params = {}) =>
   downloadFile(`/reports/inventory-value/pdf${buildQuery(params)}`, "inventory-valuation-report.pdf");
 
@@ -446,6 +450,15 @@ export const downloadMovementReportCsv = (params = {}) =>
 
 export const downloadMovementReportExcel = (params = {}) =>
   downloadFile(`/reports/movements/excel${buildQuery(params)}`, "item-movement-report.xlsx");
+
+export const downloadCurrentStockReportPdf = (params = {}) =>
+  downloadFile(`/reports/current-stock/pdf${buildQuery(params)}`, "current-stock-report.pdf");
+
+export const downloadCurrentStockReportCsv = (params = {}) =>
+  downloadFile(`/reports/current-stock/csv${buildQuery(params)}`, "current-stock-report.csv");
+
+export const downloadCurrentStockReportExcel = (params = {}) =>
+  downloadFile(`/reports/current-stock/excel${buildQuery(params)}`, "current-stock-report.xlsx");
 
 export const createIssue = (data) =>
   request("/issues", {

@@ -1321,6 +1321,229 @@ async function getInventoryValue(filters, user) {
   });
 }
 
+function getStockStatus(quantity, reorderLevel) {
+  const currentQuantity = Number(quantity || 0);
+  const minimumQuantity = Number(reorderLevel || 0);
+
+  if (currentQuantity <= 0) {
+    return "Out of Stock";
+  }
+
+  if (currentQuantity <= minimumQuantity) {
+    return "Low Stock";
+  }
+
+  return "In Stock";
+}
+
+async function getCurrentStock(filters, user) {
+  const scopedFilters = applyLocationScope(filters, user);
+  const conditions = ["i.is_active = TRUE"];
+  const values = [];
+
+  if (scopedFilters.itemId) {
+    values.push(scopedFilters.itemId);
+    conditions.push(`i.id = $${values.length}::BIGINT`);
+  }
+
+  if (scopedFilters.categoryId) {
+    values.push(scopedFilters.categoryId);
+    conditions.push(`i.category_id = $${values.length}::BIGINT`);
+  }
+
+  if (scopedFilters.search) {
+    values.push(`%${scopedFilters.search}%`);
+    conditions.push(`i.name ILIKE $${values.length}::TEXT`);
+  }
+
+  const locationId = scopedFilters.locationId || null;
+  const locationJoin = locationId
+    ? `JOIN locations l ON l.id = $${values.push(locationId)}::BIGINT`
+    : "LEFT JOIN locations l ON l.id = b.location_id";
+  const balanceJoin = locationId
+    ? `LEFT JOIN inventory_balance b ON b.item_id = i.id AND b.location_id = $${values.length}::BIGINT`
+    : "LEFT JOIN inventory_balance b ON b.item_id = i.id";
+
+  const result = await query(
+    `
+      SELECT
+        i.id AS item_id,
+        i.name AS item_name,
+        i.description,
+        i.unit,
+        i.reorder_level,
+        i.image_path AS item_image,
+        c.name AS category,
+        supplier.name AS supplier,
+        l.id AS location_id,
+        l.name AS location,
+        COALESCE(b.quantity, 0) AS current_quantity,
+        b.updated_at AS last_stock_update
+      FROM items i
+      LEFT JOIN categories c ON c.id = i.category_id
+      LEFT JOIN suppliers supplier ON supplier.id = i.supplier_id
+      ${balanceJoin}
+      ${locationJoin}
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY i.name, l.name
+    `,
+    values
+  );
+
+  return result.rows.map((row) => {
+    const currentQuantity = Number(row.current_quantity || 0);
+    const reorderLevel = Number(row.reorder_level || 0);
+
+    return {
+      item_id: row.item_id,
+      item_name: row.item_name,
+      description: row.description,
+      category: row.category,
+      supplier: row.supplier,
+      unit: row.unit,
+      reorder_level: reorderLevel,
+      item_image: row.item_image,
+      location_id: row.location_id,
+      location: row.location,
+      current_quantity: currentQuantity,
+      available_quantity: Math.max(currentQuantity - reorderLevel, 0),
+      stock_status: getStockStatus(currentQuantity, reorderLevel),
+      last_stock_update: row.last_stock_update
+    };
+  });
+}
+
+async function exportCurrentStockCsv(filters, user) {
+  const rows = await getCurrentStock(filters, user);
+  const parser = new Parser({
+    fields: [
+      { label: "Item Name", value: "item_name" },
+      { label: "Category", value: "category" },
+      { label: "Supplier", value: "supplier" },
+      { label: "Location", value: "location" },
+      { label: "Unit", value: "unit" },
+      { label: "Current Quantity", value: "current_quantity" },
+      { label: "Reorder Level", value: "reorder_level" },
+      { label: "Available Quantity", value: "available_quantity" },
+      { label: "Stock Status", value: "stock_status" },
+      { label: "Description", value: "description" },
+      { label: "Last Stock Update", value: "last_stock_update" }
+    ]
+  });
+
+  return parser.parse(rows);
+}
+
+async function exportCurrentStockExcel(filters, user) {
+  const rows = await getCurrentStock(filters, user);
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Current Stock");
+
+  sheet.columns = [
+    { header: "Item Name", key: "item_name", width: 30 },
+    { header: "Category", key: "category", width: 20 },
+    { header: "Supplier", key: "supplier", width: 22 },
+    { header: "Location", key: "location", width: 22 },
+    { header: "Unit", key: "unit", width: 12 },
+    { header: "Current Quantity", key: "current_quantity", width: 18 },
+    { header: "Reorder Level", key: "reorder_level", width: 16 },
+    { header: "Available Quantity", key: "available_quantity", width: 18 },
+    { header: "Stock Status", key: "stock_status", width: 16 },
+    { header: "Description", key: "description", width: 34 },
+    { header: "Last Stock Update", key: "last_stock_update", width: 22 }
+  ];
+
+  rows.forEach((row) => {
+    sheet.addRow(row);
+  });
+
+  sheet.getRow(1).font = { bold: true };
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+
+  return workbook.xlsx.writeBuffer();
+}
+
+async function exportCurrentStockPdf(filters, user, res) {
+  const rows = await getCurrentStock(filters, user);
+  const doc = new PDFDocument({ margin: 36, size: "A4", layout: "landscape" });
+
+  res.header("Content-Type", "application/pdf");
+  res.attachment("current-stock-report.pdf");
+  doc.pipe(res);
+
+  doc.font("Helvetica-Bold").fontSize(16).text("Current Stock Report");
+  doc.font("Helvetica").fontSize(9).fillColor(REPORT_COLORS.muted).text(`Generated: ${new Date().toLocaleString()}`);
+  doc.moveDown(1);
+
+  const columns = [
+    { label: "Item", width: 150 },
+    { label: "Category", width: 90 },
+    { label: "Location", width: 105 },
+    { label: "Unit", width: 55 },
+    { label: "Qty", width: 55, align: "right" },
+    { label: "Reorder", width: 60, align: "right" },
+    { label: "Available", width: 65, align: "right" },
+    { label: "Status", width: 80 }
+  ];
+  const startX = doc.page.margins.left;
+  const tableWidth = columns.reduce((sum, column) => sum + column.width, 0);
+  let cursorY = drawTableHeader(doc, {
+    x: startX,
+    y: doc.y,
+    width: tableWidth,
+    columns
+  });
+
+  rows.forEach((row, index) => {
+    if (cursorY > doc.page.height - 70) {
+      doc.addPage();
+      cursorY = drawTableHeader(doc, {
+        x: startX,
+        y: doc.page.margins.top,
+        width: tableWidth,
+        columns
+      });
+    }
+
+    const rowHeight = 32;
+    const background = index % 2 === 0 ? REPORT_COLORS.white : REPORT_COLORS.rowAlt;
+    doc.roundedRect(startX, cursorY, tableWidth, rowHeight, 8).fillAndStroke(background, REPORT_COLORS.border);
+
+    let cursorX = startX;
+    const values = [
+      row.item_name,
+      row.category || "-",
+      row.location || "-",
+      row.unit || "-",
+      row.current_quantity,
+      row.reorder_level,
+      row.available_quantity,
+      row.stock_status
+    ];
+
+    columns.forEach((column, columnIndex) => {
+      doc.font("Helvetica").fontSize(7.4).fillColor(REPORT_COLORS.ink).text(
+        normalizeDisplayText(values[columnIndex], "-"),
+        cursorX + 6,
+        cursorY + 11,
+        {
+          width: column.width - 12,
+          align: column.align || "left"
+        }
+      );
+      cursorX += column.width;
+    });
+
+    cursorY += rowHeight + 4;
+  });
+
+  if (rows.length === 0) {
+    doc.font("Helvetica").fontSize(10).fillColor(REPORT_COLORS.muted).text("No current stock data found.");
+  }
+
+  doc.end();
+}
+
 module.exports = {
   getMovementReport,
   renderMovementPdf,
@@ -1329,5 +1552,9 @@ module.exports = {
   exportInventoryValueCsv,
   exportInventoryValueExcel,
   exportInventoryValuePdf,
-  getInventoryValue
+  getInventoryValue,
+  getCurrentStock,
+  exportCurrentStockCsv,
+  exportCurrentStockExcel,
+  exportCurrentStockPdf
 };

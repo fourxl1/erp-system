@@ -3,6 +3,7 @@ const { asyncHandler, createHttpError, sendSuccess } = require("../utils/http");
 const {
   buildItemImagePath,
   buildItemImageUrl,
+  listUploadedItemImages,
   parseItemImageInput
 } = require("../utils/itemImage");
 
@@ -154,6 +155,20 @@ const getAvailableInventory = asyncHandler(async (req, res) => {
   );
 });
 
+const getUploadedItemImages = asyncHandler(async (req, res) => {
+  const images = listUploadedItemImages().map((filename) => {
+    const imagePath = buildItemImagePath(filename);
+
+    return {
+      filename,
+      image_path: imagePath,
+      image_url: buildItemImageUrl(req, filename)
+    };
+  });
+
+  return sendSuccess(res, images);
+});
+
 module.exports = {
   getItems,
   getItem,
@@ -162,5 +177,6 @@ module.exports = {
   deleteItemController,
   getInventoryStats,
   getItemStock,
-  getAvailableInventory
+  getAvailableInventory,
+  getUploadedItemImages
 };

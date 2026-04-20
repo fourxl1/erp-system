@@ -9,6 +9,7 @@ function getReportFilters(req) {
     recipientId: req.query.recipient_id,
     locationId: req.query.location_id,
     movementType: req.query.movement_type,
+    search: req.query.search,
     startDate: req.query.start_date,
     endDate: req.query.end_date
   };
@@ -134,6 +135,59 @@ const getInventoryValueReport = asyncHandler(async (req, res) => {
   });
 });
 
+const getCurrentStockReport = asyncHandler(async (req, res) => {
+  const rows = await reportService.getCurrentStock(getReportFilters(req), req.user);
+  const serializedRows = rows.map((row) => ({
+    ...row,
+    item_image: buildItemImageUrl(req, row.item_image)
+  }));
+
+  const summary = serializedRows.reduce(
+    (accumulator, row) => ({
+      item_count: accumulator.item_count + 1,
+      total_quantity: accumulator.total_quantity + Number(row.current_quantity || 0),
+      low_stock_count:
+        accumulator.low_stock_count + (row.stock_status === "Low Stock" ? 1 : 0),
+      out_of_stock_count:
+        accumulator.out_of_stock_count + (row.stock_status === "Out of Stock" ? 1 : 0)
+    }),
+    {
+      item_count: 0,
+      total_quantity: 0,
+      low_stock_count: 0,
+      out_of_stock_count: 0
+    }
+  );
+
+  return sendSuccess(res, {
+    rows: serializedRows,
+    summary
+  });
+});
+
+const exportCurrentStockReportPdf = asyncHandler(async (req, res) => {
+  return reportService.exportCurrentStockPdf(getReportFilters(req), req.user, res);
+});
+
+const exportCurrentStockReportCsv = asyncHandler(async (req, res) => {
+  const csv = await reportService.exportCurrentStockCsv(getReportFilters(req), req.user);
+
+  res.header("Content-Type", "text/csv");
+  res.attachment("current-stock-report.csv");
+  return res.send(csv);
+});
+
+const exportCurrentStockReportExcel = asyncHandler(async (req, res) => {
+  const workbook = await reportService.exportCurrentStockExcel(getReportFilters(req), req.user);
+
+  res.header(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.attachment("current-stock-report.xlsx");
+  return res.send(Buffer.from(workbook));
+});
+
 module.exports = {
   getMovementReport,
   exportMovementReportPdf,
@@ -142,5 +196,9 @@ module.exports = {
   exportInventoryValueReportPdf,
   exportInventoryValueReportCsv,
   exportInventoryValueReportExcel,
-  getInventoryValueReport
+  getInventoryValueReport,
+  getCurrentStockReport,
+  exportCurrentStockReportPdf,
+  exportCurrentStockReportCsv,
+  exportCurrentStockReportExcel
 };

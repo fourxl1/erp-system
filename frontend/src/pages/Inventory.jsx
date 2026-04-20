@@ -8,9 +8,11 @@ import {
   fetchCategories,
   fetchItems,
   fetchSuppliers,
+  fetchUploadedItemImages,
   fetchUnits,
   updateItem
 } from "../services/api";
+import { hasAllowedRole, readStoredUser } from "../utils/auth";
 
 const emptyForm = {
   id: null,
@@ -20,7 +22,8 @@ const emptyForm = {
   unit: "",
   reorder_level: "",
   description: "",
-  image: null
+  image: null,
+  image_path: ""
 };
 
 function getInventoryHealth(item) {
@@ -44,6 +47,7 @@ function Inventory() {
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [units, setUnits] = useState([]);
+  const [uploadedImages, setUploadedImages] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
@@ -54,26 +58,29 @@ function Inventory() {
     () => [...new Set(units.map((unit) => unit.name).filter(Boolean))],
     [units]
   );
+  const canManageItems = hasAllowedRole(readStoredUser(), ["admin", "superadmin"]);
 
   const loadData = useCallback(async () => {
     try {
-      const [itemData, categoryData, supplierData, unitData] = await Promise.all([
+      const [itemData, categoryData, supplierData, unitData, uploadedImageData] = await Promise.all([
         fetchItems(),
         fetchCategories(),
         fetchSuppliers(),
-        fetchUnits()
+        fetchUnits(),
+        canManageItems ? fetchUploadedItemImages() : Promise.resolve([])
       ]);
 
       setItems(itemData.items || []);
       setCategories(Array.isArray(categoryData) ? categoryData : []);
       setSuppliers(Array.isArray(supplierData) ? supplierData : []);
       setUnits(Array.isArray(unitData) ? unitData : []);
+      setUploadedImages(Array.isArray(uploadedImageData) ? uploadedImageData : []);
       setError("");
     } catch (err) {
       console.error(err);
       setError(err.message || "Failed to load inventory data");
     }
-  }, []);
+  }, [canManageItems]);
 
   useEffect(() => {
     void loadData();
@@ -93,7 +100,8 @@ function Inventory() {
       unit: item.unit || "",
       reorder_level: item.reorder_level || "",
       description: item.description || "",
-      image: null
+      image: null,
+      image_path: item.image_path || ""
     });
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -323,16 +331,43 @@ function Inventory() {
                       <div className="file-input-wrapper">
                         <input
                           type="file"
+                          accept="image/jpeg,image/png,image/webp,image/bmp"
                           className="inventory-input inventory-input--file"
                           onChange={(event) =>
                             setFormData((current) => ({
                               ...current,
-                              image: event.target.files?.[0] || null
+                              image: event.target.files?.[0] || null,
+                              image_path: ""
                             }))
                           }
                         />
                       </div>
                     </label>
+
+                    {uploadedImages.length > 0 ? (
+                      <label className="field">
+                        <span>Use Existing Upload</span>
+                        <select
+                          name="image_path"
+                          className="inventory-input"
+                          value={formData.image_path}
+                          onChange={(event) =>
+                            setFormData((current) => ({
+                              ...current,
+                              image: null,
+                              image_path: event.target.value
+                            }))
+                          }
+                        >
+                          <option value="">No existing image selected</option>
+                          {uploadedImages.map((image) => (
+                            <option key={image.filename} value={image.image_path}>
+                              {image.filename}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
                   </div>
                 </div>
 

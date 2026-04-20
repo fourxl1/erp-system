@@ -170,6 +170,20 @@ async function validateItem(itemId) {
   return item;
 }
 
+async function validateActiveLocation(locationId, label = "Location") {
+  const location = await systemModel.getLocationById(Number(locationId));
+
+  if (!location) {
+    throw buildError(`${label} location not found`, 404);
+  }
+
+  if (location.is_active === false) {
+    throw buildError(`${label} location is inactive`);
+  }
+
+  return location;
+}
+
 async function validateSupplierForLocation(supplierId, locationId) {
   if (!supplierId) {
     return null;
@@ -325,7 +339,11 @@ function serializeMovementHeader(record, user = null) {
     ...record,
     movement_type: toPublicMovementType(record.movement_type),
     items: normalizeMovementItemsField(record.items),
-    status: String(record.status || "").toUpperCase()
+    status: String(record.status || "").toUpperCase(),
+    can_modify:
+      String(record.movement_type || "").toUpperCase() !== "TRANSFER" &&
+      !record.request_id &&
+      Number(record.maintenance_usage_count || 0) === 0
   };
 
   if (!user) {
@@ -334,6 +352,8 @@ function serializeMovementHeader(record, user = null) {
 
   return {
     ...movement,
+    can_edit: canModifyMovement(user, movement, "update"),
+    can_delete: canModifyMovement(user, movement, "delete"),
     can_confirm: canManageTransferAtDestination(user, movement) && movement.status === "PENDING",
     can_reject: canManageTransferAtDestination(user, movement) && movement.status === "PENDING"
   };
@@ -425,6 +445,22 @@ function normalizeMovementItems(items, movementType) {
 
 async function validateMovementItems(items) {
   await Promise.all(items.map((entry) => validateItem(entry.item_id)));
+}
+
+async function resolveTransferItemCosts(items, sourceLocationId) {
+  return Promise.all(
+    items.map(async (entry) => {
+      if (entry.cost !== null && entry.cost !== undefined) {
+        return entry;
+      }
+
+      const averageCost = await movementModel.getAverageUnitCost(entry.item_id, sourceLocationId);
+      return {
+        ...entry,
+        cost: averageCost
+      };
+    })
+  );
 }
 
 function resolveItemDelta(item, movementType, phase = "SOURCE") {
@@ -576,6 +612,12 @@ async function recordMovementWithItems(client, payload, user) {
     throw buildError("Transfer source and destination cannot be the same");
   }
 
+  await validateActiveLocation(sourceLocationId, "Source");
+
+  if (movementType === "TRANSFER") {
+    await validateActiveLocation(destinationLocationId, "Destination");
+  }
+
   await validateSectionForLocation(payload.section_id, sourceLocationId);
   await validateAssetForLocation(payload.asset_id, sourceLocationId);
 
@@ -587,15 +629,20 @@ async function recordMovementWithItems(client, payload, user) {
     await validateRecipientForLocation(payload.recipient_id, sourceLocationId);
   }
 
+  const movementItems =
+    movementType === "TRANSFER"
+      ? await resolveTransferItemCosts(normalizedItems, sourceLocationId)
+      : normalizedItems;
+
   await assertStockAvailabilityForItems(
     client,
-    normalizedItems,
+    movementItems,
     sourceLocationId,
     movementType,
     "SOURCE"
   );
 
-  const summary = summarizeHeaderLegacyValues(normalizedItems);
+  const summary = summarizeHeaderLegacyValues(movementItems);
   const movement = await movementModel.createMovementHeader(client, {
     ...summary,
     movement_type: movementType,
@@ -614,10 +661,10 @@ async function recordMovementWithItems(client, payload, user) {
     created_at: payload.created_at || null
   });
 
-  const movementItemsPayload = normalizedItems.map((entry) => ({
+  const movementItemsPayload = movementItems.map((entry) => ({
     item_id: entry.item_id,
     quantity: movementType === "ADJUSTMENT" ? entry.quantity : Math.abs(Number(entry.quantity)),
-    cost: entry.cost || 0
+    cost: entry.cost ?? 0
   }));
   await movementModel.insertMovementItems(
     client,
@@ -629,7 +676,7 @@ async function recordMovementWithItems(client, payload, user) {
   await applyMovementItemDeltas(
     client,
     movement,
-    normalizedItems,
+    movementItems,
     sourceLocationId,
     movementType,
     "SOURCE"
@@ -1588,9 +1635,14 @@ async function deleteMaintenanceRecord(id, user) {
   return deletedMaintenance.maintenance;
 }
 
-function assertMovementModificationAccess(user, movement) {
+function assertMovementModificationAccess(user, movement, action = "update") {
   if (user.role_code === "STAFF") {
-    throw buildError("Staff cannot modify stock movements", 403);
+    if (action === "delete") {
+      throw buildError("Staff cannot delete stock movements", 403);
+    }
+
+    assertStoreAccess(user, movement.location_id);
+    return;
   }
 
   if (user.role_code === "ADMIN") {
@@ -1613,6 +1665,16 @@ function assertMovementCanBeSafelyModified(movement) {
 
   if (Number(movement.maintenance_usage_count || 0) > 0) {
     throw buildError("Movements linked to maintenance records cannot be modified safely", 400);
+  }
+}
+
+function canModifyMovement(user, movement, action = "update") {
+  try {
+    assertMovementCanBeSafelyModified(movement);
+    assertMovementModificationAccess(user, movement, action);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -1663,30 +1725,100 @@ async function reverseExistingMovement(client, movement) {
   return reverseDelta;
 }
 
+async function reverseExistingMovementItems(client, movement) {
+  const items = normalizeMovementItemsField(movement.items);
+  const affectedEntries = [];
+
+  if (items.length === 0) {
+    throw buildError("Movement has no item lines to reverse", 400);
+  }
+
+  for (const item of items) {
+    const existingDelta = resolveItemDelta(item, movement.movement_type, "SOURCE");
+    const reverseDelta = existingDelta * -1;
+    const currentBalance = await movementModel.getBalanceForUpdate(
+      client,
+      item.item_id,
+      movement.location_id
+    );
+    const currentQuantity = Number(currentBalance?.quantity || 0);
+
+    if (currentQuantity + reverseDelta < 0) {
+      throw buildError(
+        "This movement can no longer be reversed safely because it would create negative stock",
+        409
+      );
+    }
+
+    const balance = await movementModel.upsertBalance(
+      client,
+      item.item_id,
+      movement.location_id,
+      reverseDelta
+    );
+
+    if (!balance || Number(balance.quantity) < 0) {
+      throw buildError("Inventory balance cannot become negative");
+    }
+
+    affectedEntries.push({
+      item_id: item.item_id,
+      location_id: movement.location_id
+    });
+  }
+
+  return affectedEntries;
+}
+
+function buildMovementItemsFromPayload(payload, movementType) {
+  if (Array.isArray(payload.items) && payload.items.length > 0) {
+    return normalizeMovementItems(payload.items, movementType);
+  }
+
+  if (payload.item_id && payload.quantity !== undefined && payload.quantity !== null) {
+    const quantity =
+      movementType === "ADJUSTMENT" && payload.adjustment_direction === "DECREASE"
+        ? Math.abs(Number(payload.quantity || 0)) * -1
+        : Number(payload.quantity || 0);
+
+    return normalizeMovementItems(
+      [
+        {
+          item_id: payload.item_id,
+          quantity,
+          cost: payload.unit_cost
+        }
+      ],
+      movementType
+    );
+  }
+
+  throw buildError("movement_type and movement items are required");
+}
+
 async function updateMovement(id, payload, user) {
   const updatedMovement = await withTransaction(async (client) => {
-    const existingMovement = await movementModel.getMovementById(id, {
+    const existingMovement = await movementModel.getMovementHeaderById(id, {
       client,
       forUpdate: true
     });
 
     assertMovementCanBeSafelyModified(existingMovement);
-    assertMovementModificationAccess(user, existingMovement);
+    assertMovementModificationAccess(user, existingMovement, "update");
 
-    await reverseExistingMovement(client, existingMovement);
+    const movementType = normalizeIncomingMovementType(payload.movement_type || existingMovement.movement_type);
+
+    if (!MOVEMENT_TYPES.has(movementType) || movementType === "TRANSFER") {
+      throw buildError("Invalid movement type");
+    }
+
+    const normalizedItems = buildMovementItemsFromPayload(payload, movementType);
+    await validateMovementItems(normalizedItems);
 
     const nextPayload = {
-      item_id: Number(payload.item_id),
       location_id: Number(existingMovement.location_id),
       section_id: resolveOptionalRelation(payload.section_id, existingMovement.section_id),
-      movement_type: payload.movement_type,
-      quantity: Number(payload.quantity),
-      unit_cost:
-        payload.unit_cost !== undefined &&
-        payload.unit_cost !== null &&
-        String(payload.unit_cost).trim() !== ""
-          ? Number(payload.unit_cost)
-          : undefined,
+      movement_type: movementType,
       reference:
         payload.reference === undefined
           ? existingMovement.reference || null
@@ -1712,47 +1844,83 @@ async function updateMovement(id, payload, user) {
       nextPayload.location_id = Number(user.location_id);
     }
 
-    const prepared = await prepareSingleMovement(client, nextPayload, user);
+    if (movementType !== "IN") {
+      nextPayload.supplier_id = null;
+    }
 
-    const movement = await movementModel.updateMovement(client, id, {
+    if (movementType !== "OUT") {
+      nextPayload.recipient_id = null;
+    }
+
+    await validateActiveLocation(nextPayload.location_id, "Movement");
+    await validateSectionForLocation(nextPayload.section_id, nextPayload.location_id);
+    await validateAssetForLocation(nextPayload.asset_id, nextPayload.location_id);
+
+    if (movementType === "IN" && !nextPayload.supplier_id) {
+      throw buildError("supplier_id is required for IN movements");
+    }
+
+    if (movementType === "OUT" && !nextPayload.recipient_id) {
+      throw buildError("recipient_id is required for OUT movements");
+    }
+
+    if (nextPayload.supplier_id) {
+      await validateSupplierForLocation(nextPayload.supplier_id, nextPayload.location_id);
+    }
+
+    if (nextPayload.recipient_id) {
+      await validateRecipientForLocation(nextPayload.recipient_id, nextPayload.location_id);
+    }
+
+    const reversedEntries = await reverseExistingMovementItems(client, existingMovement);
+    await movementModel.deleteLedgerEntries(client, id);
+
+    await assertStockAvailabilityForItems(
+      client,
+      normalizedItems,
+      nextPayload.location_id,
+      movementType,
+      "SOURCE"
+    );
+
+    const summary = summarizeHeaderLegacyValues(normalizedItems);
+    const movement = await movementModel.updateMovementHeader(client, id, {
       ...nextPayload,
-      movement_type: prepared.movementType,
-      quantity: prepared.quantity,
-      detail_quantity: prepared.movementType === "ADJUSTMENT" ? prepared.deltaQuantity : prepared.quantity,
-      unit_cost: prepared.resolvedUnitCost
+      ...summary,
+      movement_type: movementType,
+      performed_by: existingMovement.performed_by
     });
 
     if (!movement) {
       throw buildError("Movement not found", 404);
     }
 
-    const appliedBalance = await movementModel.upsertBalance(
+    const movementItemsPayload = normalizedItems.map((entry) => ({
+      item_id: entry.item_id,
+      quantity: movementType === "ADJUSTMENT" ? entry.quantity : Math.abs(Number(entry.quantity)),
+      cost: entry.cost ?? 0
+    }));
+
+    await movementModel.replaceMovementItems(
       client,
-      nextPayload.item_id,
+      id,
       nextPayload.location_id,
-      prepared.deltaQuantity
+      movementItemsPayload
     );
 
-    if (!appliedBalance || Number(appliedBalance.quantity) < 0) {
-      throw buildError("Inventory balance cannot become negative");
-    }
+    const appliedEntries = await applyMovementItemDeltas(
+      client,
+      movement,
+      normalizedItems,
+      nextPayload.location_id,
+      movementType,
+      "SOURCE"
+    );
 
-    await movementModel.saveLedgerEntry(client, {
-      item_id: nextPayload.item_id,
-      location_id: nextPayload.location_id,
-      movement_id: id,
-      quantity: prepared.deltaQuantity,
-      unit_cost: prepared.resolvedUnitCost,
-      total_cost: prepared.deltaQuantity * prepared.resolvedUnitCost,
-      created_at: nextPayload.created_at
-    });
+    const hydratedMovement = await movementModel.getMovementHeaderById(id, { client });
 
-    const oldSnapshot = serializeMovementRecord(existingMovement);
-    const newSnapshot = serializeMovementRecord({
-      ...movement,
-      ledger_quantity: prepared.deltaQuantity,
-      maintenance_usage_count: existingMovement.maintenance_usage_count
-    });
+    const oldSnapshot = serializeMovementHeader(existingMovement);
+    const newSnapshot = serializeMovementHeader(hydratedMovement);
 
     await movementModel.insertMovementLog(client, {
       movement_id: id,
@@ -1768,15 +1936,8 @@ async function updateMovement(id, payload, user) {
     });
 
     return {
-      movement: {
-        ...movement,
-        ledger_quantity: prepared.deltaQuantity,
-        maintenance_usage_count: existingMovement.maintenance_usage_count
-      },
-      affectedEntries: [
-        { item_id: existingMovement.item_id, location_id: existingMovement.location_id },
-        { item_id: nextPayload.item_id, location_id: nextPayload.location_id }
-      ]
+      movement: hydratedMovement,
+      affectedEntries: [...reversedEntries, ...appliedEntries]
     };
   });
 
@@ -1786,15 +1947,15 @@ async function updateMovement(id, payload, user) {
 
 async function deleteMovement(id, user) {
   const deletedMovement = await withTransaction(async (client) => {
-    const existingMovement = await movementModel.getMovementById(id, {
+    const existingMovement = await movementModel.getMovementHeaderById(id, {
       client,
       forUpdate: true
     });
 
     assertMovementCanBeSafelyModified(existingMovement);
-    assertMovementModificationAccess(user, existingMovement);
+    assertMovementModificationAccess(user, existingMovement, "delete");
 
-    await reverseExistingMovement(client, existingMovement);
+    const affectedEntries = await reverseExistingMovementItems(client, existingMovement);
     await movementModel.deleteLedgerEntries(client, id);
 
     const deleted = await movementModel.deleteMovement(client, id);
@@ -1803,7 +1964,7 @@ async function deleteMovement(id, user) {
       throw buildError("Movement not found", 404);
     }
 
-    const snapshot = serializeMovementRecord(existingMovement);
+    const snapshot = serializeMovementHeader(existingMovement);
 
     await insertMovementAuditLog(client, user.id, "MOVEMENT_DELETED", id, {
       old_value: snapshot
@@ -1811,9 +1972,7 @@ async function deleteMovement(id, user) {
 
     return {
       movement: existingMovement,
-      affectedEntries: [
-        { item_id: existingMovement.item_id, location_id: existingMovement.location_id }
-      ]
+      affectedEntries
     };
   });
 
